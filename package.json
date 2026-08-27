@@ -1,0 +1,52 @@
+{
+  "name": "glance-scanner",
+  "version": "1.2.1",
+  "description": "Semantic security scanner for AI agents. Reads skills, MCP servers, hooks and repositories an agent has been pointed at.",
+  "main": "dist/cli.js",
+  "bin": {
+    "glance-scanner": "dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "LICENSE",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/cli.ts",
+    "test": "node tests/validate.js",
+    "start": "node dist/cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/golem-labs-etc/agent-security-scanner.git"
+  },
+  "keywords": [
+    "security",
+    "scanner",
+    "claude",
+    "ai",
+    "agent",
+    "semantic",
+    "golem",
+    "glance"
+  ],
+  "author": "Golem Labs",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/golem-labs-etc/agent-security-scanner/issues"
+  },
+  "homepage": "https://github.com/golem-labs-etc/agent-security-scanner#readme",
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^4.9.5"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.120.0",
+    "axios": "^1.19.0",
+    "commander": "^8.3.0",
+    "dotenv": "^17.4.2"
+  }
+}

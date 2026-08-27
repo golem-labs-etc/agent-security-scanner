@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Refuses to push private material to the public repo.
+# Enabled with: git config core.hooksPath hooks
+BAD=$(git ls-files | grep -iE '^(src|dist|tests)/guard/|^guard/|GLANCE-GUARD-SPEC\.md|GUARDIAN-MVP\.md|BRAND_SPEC\.md|HANDOFF-TO-CLAUDE-CODE\.md|^golem-.*\.md|mvp-technical-architecture\.md|glance-market-read\.md|glance-blue-ocean\.md|^public/|^api/|^data/|^partials/|^vercel\.json$|^dist/')
+if [ -n "$BAD" ]; then
+  echo ""
+  echo "  PUSH BLOCKED. This is the PUBLIC repo. These files must not be in it:"
+  echo ""
+  echo "$BAD" | sed 's/^/    /'
+  echo ""
+  echo "  Guard  -> ~/glance-guard      Site -> ~/glance-site"
+  echo "  Specs  -> ~/agent-security-scanner/_private/  (gitignored)"
+  echo "  See CLAUDE.md. If you believe this is wrong, ask Eitan, do not bypass."
+  echo ""
+  exit 1
+fi
+exit 0
