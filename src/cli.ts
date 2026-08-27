@@ -11,7 +11,6 @@ import { ToolsOrchestrator } from './tools-orchestrator';
 import { FindingsDeduplicator } from './deduplicator';
 import { SemanticFilter } from './semantic-filter';
 import { resolveProvider, resolveApiKey } from './env-key';
-import { registerGuardCommands } from './guard/cli';
 
 dotenv.config();
 
@@ -22,7 +21,6 @@ program
   .description('Semantic security scanner for AI agents. Mock mode by default — no API costs.')
   .version(require('../package.json').version);
 
-registerGuardCommands(program);
 
 
 // ── install-tools command ──────────────────────────────────────────────────
