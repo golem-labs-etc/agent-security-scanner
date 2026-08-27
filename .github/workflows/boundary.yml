@@ -1,0 +1,54 @@
+# Server-side enforcement of the public/private boundary.
+# The pre-push hook is advisory; this is not. It runs on every push and PR and
+# cannot be bypassed by a session that skipped installing hooks.
+name: boundary
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  no-private-material:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse guard source, internal specs and site files
+        run: |
+          BAD=$(git ls-files | grep -iE \
+            '^(src|dist|tests)/guard/|^guard/|GLANCE-GUARD-SPEC\.md|GUARDIAN-MVP\.md|BRAND_SPEC\.md|HANDOFF-TO-CLAUDE-CODE\.md|^golem-.*\.md|mvp-technical-architecture\.md|glance-market-read\.md|glance-blue-ocean\.md|^public/|^api/|^data/|^partials/|^vercel\.json$|^dist/' \
+            || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::This is the PUBLIC MIT repo. Private material must not be committed here."
+            echo "$BAD" | sed 's/^/  /'
+            echo ""
+            echo "  Guard -> glance-guard (private).  Site -> glance-site (private)."
+            echo "  Specs -> _private/ (gitignored).  See CLAUDE.md."
+            exit 1
+          fi
+          echo "Boundary clean."
+
+      - name: Refuse diagnostic endpoints
+        run: |
+          BAD=$(git ls-files | grep -iE 'debug-env|debug-test|/debug-' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Diagnostic endpoints must never ship. See CLAUDE.md."
+            echo "$BAD" | sed 's/^/  /'; exit 1
+          fi
+          echo "No debug endpoints."
+
+      - name: LICENSE must still disclaim the guard
+        run: |
+          grep -q "does NOT cover Glance guard" LICENSE || {
+            echo "::error::LICENSE no longer disclaims the guard. That boundary is deliberate."; exit 1; }
+          echo "LICENSE intact."
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm ci || npm install
+      - run: npx tsc --noEmit

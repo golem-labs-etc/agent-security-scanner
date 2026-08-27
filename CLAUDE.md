@@ -67,3 +67,29 @@ git ls-files | grep -iE 'guard|SPEC|golem-'  # must be empty after
 ## Changing any of this
 
 Ask Eitan. Do not settle it in a commit message.
+
+## Parallel sessions
+
+More than one session has worked on this tree at once, and it caused three leaks
+and one loss of uncommitted work. Rules:
+
+- **One session per working copy.** Need two? `git worktree add ../work -b topic`.
+- **Never rewrite shared history**: no `--force`, `--orphan`, `reset --hard` or
+  squash of pushed commits on `main`. That is Eitan's call, not a task step.
+- **Commit before going idle.** Untracked work is what gets swept in or dropped.
+- **Before any destructive op**, run `git status --porcelain | grep '^??'`. If it
+  lists files you did not create, another session is live. Stop.
+- **Never force past a rejected push.** Rejection means someone moved; merge.
+- **Work on a branch, never commit to `main` directly.** Name it for your task:
+  `guard/m4`, `site/pricing-copy`. Open a PR and merge. `main` is protected:
+  force-push and deletion are refused by GitHub, and CI must pass.
+- **Rollback is a revert, not a rewrite.** `git revert <merge-sha>` undoes a bad
+  merge without touching anyone else's history. Never reach for `reset --hard`
+  or `--force` on a shared branch.
+- **Claim the tree**: append a line to `.WORKING` (gitignored) when you start,
+  read it before destroying anything, clear it when done. This is advisory; git
+  has no real file locking, so it only works if both sessions honour it.
+- **If the tree is in a state you did not create**, say so and stop. Do not
+  reconcile it silently.
+
+Full reasoning: `COORDINATION.md`.
