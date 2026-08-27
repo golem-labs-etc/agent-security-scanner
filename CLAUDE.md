@@ -73,7 +73,7 @@ Ask Eitan. Do not settle it in a commit message.
 More than one session has worked on this tree at once, and it caused three leaks
 and one loss of uncommitted work. Rules:
 
-- **One session per working copy.** Need two? `git worktree add ../work -b topic`.
+- **One session per working copy.** Need two? `git worktree add ../work -b topic`, or `tools/session.sh` in the scanner repo.
 - **Never rewrite shared history**: no `--force`, `--orphan`, `reset --hard` or
   squash of pushed commits on `main`. That is Eitan's call, not a task step.
 - **Commit before going idle.** Untracked work is what gets swept in or dropped.
