@@ -1,4 +1,4 @@
-# Glance site
+# Glance Scanner
 
 Reads code and tells you what is already wrong in it. Built for the files an AI
 agent runs on: skills, MCP server definitions, hooks, and the repositories an
