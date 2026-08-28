@@ -29,24 +29,67 @@ npx glance-scanner analyze --file app.js   # one file
 
 ## What you get without a key
 
-Pattern detection runs by default. It is free, offline and fast, and it is
-genuinely limited: it matches shapes in code, so it finds the mistakes that
-look like themselves and misses the ones that do not.
+Two real static engines, no API key, no account:
 
-Known gaps in pattern detection, so you are not surprised by them:
+| Engine | Finds | Needs |
+| --- | --- | --- |
+| [semgrep](https://semgrep.dev) `p/default` | 1074 rules: injection, traversal, XSS, deserialisation, leaked credentials | one install, see below |
+| `npm audit` | dependencies with published advisories | a `package.json` and a lockfile |
 
-- Command injection through shell exec is not detected.
-- Cross-site scripting is caught in EJS templates only. Assignments to
-  `innerHTML` are missed.
-- Path traversal in Python via `os.path.join` with user input is not covered.
+Every line number comes from the engine that found it. Nothing here recomputes
+or guesses one. **A finding that has no line number is printed without one** —
+an `npm audit` advisory is about a dependency, not a place in your code, so it
+gets no line rather than a made-up one.
 
-The CLI prints a line telling you which mode it ran in. Believe that line.
+The scan names both engines every time it runs, and says why either one did not:
+
+```
+Static analysis (no API key). Add --ai for semantic analysis.
+  semgrep (p/default): 23 findings in 19.4s
+  npm audit: 144 findings in 2.1s
+```
+
+If neither is available it says so and returns nothing. It never falls back to
+invented output.
+
+### Installing semgrep
+
+```bash
+npx glance-scanner install-tools --semgrep     # or: pipx install semgrep
+```
+
+The first semgrep run downloads its rules to `~/.semgrep`. After that it runs
+with no network at all. The CLI tells you when that download is about to happen.
+`--metrics=off` is passed on every invocation, always.
+
+### Known gaps, so you are not surprised by them
+
+Measured, not assumed:
+
+- **SQL injection by string concatenation in JavaScript is missed.**
+  `"SELECT * FROM users WHERE id = '" + req.query.id + "'"` produces no finding.
+  The equivalent in Python (`"... = '%s'" % uid`) *is* caught. If SQL injection
+  in JS matters to you, use `--ai`.
+- `npm audit` is skipped when a project has a `package.json` but no lockfile,
+  rather than generating one. Run `npm install --package-lock-only` yourself if
+  you want it covered; a scanner should not write files into the tree it was
+  pointed at.
+- semgrep's own `.semgrepignore` excludes test directories and untracked files
+  when it is given a directory. glance-scanner passes explicit file paths
+  instead, so what you asked to scan is what gets scanned.
+- Neither engine reasons about intent. A parameterised query that merely looks
+  like concatenation, or a test fixture that looks like a leaked key, will still
+  be reported. `--ai --filter-fp` is the pass that drops those.
+
+We have not measured a false-positive rate against a public benchmark, so this
+README does not quote one.
 
 ## What you get with a key
 
-Semantic analysis reads the code the way a reviewer would, so it catches the
-three gaps above and reasons about intent rather than shape. It costs whatever
-your provider charges, which for a small repository is cents.
+Semantic analysis reads the code the way a reviewer would. It reasons about
+intent rather than shape, so it covers the gaps above — including the JavaScript
+SQL concatenation case semgrep misses. It costs whatever your provider charges,
+which for a small repository is cents.
 
 `AI_API_KEY` is **your AI provider's key**, not a Glance account. There is no
 Glance signup and nothing to pay us for. Get a key from
@@ -79,10 +122,10 @@ npx glance-scanner analyze --path . --ai --filter-fp
 We have not measured the false-positive rate against a public benchmark, so
 this README does not quote one.
 
-## The four open-source scanners
+## The extra Python scanners
 
-These are separate tools, not bundled. Install them once and glance-scanner
-will call them and merge their findings with its own, deduplicated.
+These are optional and separate from the default scan. Install them once and
+glance-scanner will call them and merge their findings, deduplicated.
 
 ```bash
 npx glance-scanner install-tools
@@ -119,6 +162,7 @@ does.
 | `--with-linting` | add pylint |
 | `--with-dependencies` | add pip-audit |
 | `--with-all-checks` | add all four |
+| `--semgrep` (on `install-tools`) | install semgrep only |
 | `--json` | machine-readable report on stdout |
 | `--verbose` | print the code around each finding |
 | `--no-cache` | rescan even if the content has not changed |
@@ -126,17 +170,22 @@ does.
 `--semantic` is an alias for `--ai`. `--semantic-only` is a deprecated alias
 for the same thing.
 
-Results are cached by file content, so scanning the same code twice is close to
-free. The cache is a JSON file in your home directory and `--no-cache` skips it.
+Caching applies to `--ai` only, where it is keyed by file content so scanning
+the same code twice costs nothing. The cache is a JSON file in your home
+directory and `--no-cache` skips it. The static engines are not cached: they
+are local and fast, and a stale security result is worth less than the seconds
+it saves.
 
 ## What it looks for
 
 sql_injection, command_injection, path_traversal, hardcoded_secrets,
 xxe_attack, xss, csrf, insecure_deserialization, weak_crypto, missing_auth,
 hardcoded_config, unvalidated_redirect, information_disclosure,
-insecure_random, unsafe_pickle.
+insecure_random, unsafe_pickle, vulnerable_dependency.
 
-Coverage of each depends on the mode you ran in. See the two sections above.
+semgrep rules that do not map onto one of these keep their own rule id as the
+category rather than being forced into a bucket they do not fit. Coverage of
+each depends on the mode you ran in. See the two sections above.
 
 ## Building from source
 

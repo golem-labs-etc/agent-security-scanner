@@ -28,11 +28,12 @@ export class FindingsDeduplicator {
 
     // Add semantic findings
     for (const finding of semanticFindings) {
-      const key = this.generateKey(finding.pattern, finding.line);
+      const file = (finding as any).file || 'unknown';
+      const key = this.generateKey(file, finding.pattern, finding.line);
       if (!unified.has(key)) {
         unified.set(key, {
           id: key,
-          file: (finding as any).file || 'unknown',
+          file,
           line: finding.line,
           severity: this.mapSeverity(finding.severity),
           category: finding.pattern,
@@ -50,14 +51,16 @@ export class FindingsDeduplicator {
 
     // Add tool findings
     for (const finding of toolFindings) {
-      const key = this.generateKey(finding.message, finding.line);
+      const key = this.generateKey(finding.file, finding.message, finding.line);
       if (!unified.has(key)) {
         unified.set(key, {
           id: key,
           file: finding.file,
           line: finding.line,
           severity: this.mapSeverity(finding.severity),
-          category: finding.tool,
+          // Engines that classify (semgrep, npm audit) supply a taxonomy id.
+          // The Python tools do not, and fall back to the tool name as before.
+          category: finding.category || finding.tool,
           message: finding.message,
           tools: [finding.tool],
           details: finding.details,
@@ -85,10 +88,24 @@ export class FindingsDeduplicator {
     });
   }
 
-  private generateKey(message: string, line?: number): string {
+  /**
+   * Identity of a finding: file + what it says + line.
+   *
+   * The file path is load-bearing and was missing. Without it, two files hit by
+   * the same rule at the same line collide and one is silently dropped — the
+   * deduplicator reports a lower total and never says it discarded anything.
+   * With the old mock analyzer that was nearly invisible, because it emitted at
+   * most one finding per file from a fixed set of canned line numbers. A real
+   * static engine run across a directory hits it constantly: the same rule
+   * firing at line 12 of four different files became one finding.
+   *
+   * The doc comment on deduplicate() already claimed "group by file+line+
+   * category". This makes that true rather than aspirational.
+   */
+  private generateKey(file: string, discriminator: string, line?: number): string {
     const linePart = line ? `:${line}` : '';
-    // Hash the message to create a unique key
-    return `${message.substring(0, 50).replace(/[^a-zA-Z0-9]/g, '_')}${linePart}`;
+    const filePart = (file || 'unknown').replace(/[^a-zA-Z0-9]/g, '_');
+    return `${filePart}::${discriminator.substring(0, 50).replace(/[^a-zA-Z0-9]/g, '_')}${linePart}`;
   }
 
   private mapSeverity(severity: string): 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' {
