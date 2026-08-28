@@ -404,9 +404,17 @@ function printUnifiedReport(report: any, verboseFiles: string[] = []) {
     const lineInfo = finding.line ? `:${finding.line}` : '';
     const confidenceNote = finding.confidence ? ` [${finding.confidence} confidence]` : '';
     console.log(`${severityEmoji[finding.severity]} [${finding.severity}] ${finding.file}${lineInfo}${confidenceNote}`);
-    console.log(`   Category: ${finding.category}`);
+    // More than one category at one line means the rules disagree about what
+    // the problem IS, not that one of them is noise. Both get named.
+    const others = (finding.categories || []).filter((c) => c !== finding.category);
+    console.log(`   Category: ${finding.category}${others.length ? ` (also: ${others.join(', ')})` : ''}`);
     console.log(`   Message: ${finding.message}`);
     console.log(`   Tools: ${finding.tools.join(', ')}`);
+    // Every rule that fired here. With collapsing on file+line, this is the
+    // only place the count of contributing rules is visible.
+    if (finding.rules && finding.rules.length) {
+      console.log(`   Rules: ${finding.rules.join(', ')}`);
+    }
     if (finding.filteringReasoning) {
       console.log(`   Verification: ${finding.filteringReasoning}`);
     }
