@@ -74,6 +74,11 @@ export const RISK_TAXONOMY = [
     name: 'Unsafe Pickle/Marshalling',
     description: 'Deserialization of pickle/marshal with untrusted input',
   },
+  {
+    id: 'vulnerable_dependency',
+    name: 'Vulnerable Dependency',
+    description: 'A declared dependency has a published security advisory',
+  },
 ];
 
 export interface Finding {

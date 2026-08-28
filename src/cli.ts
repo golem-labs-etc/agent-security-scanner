@@ -5,20 +5,36 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { AIAnalyzer } from './analyzer';
-import { MockAnalyzer } from './mock-analyzer';
+import { StaticAnalyzer } from './static-analyzer';
 import { CacheManager } from './cache';
-import { ToolsOrchestrator } from './tools-orchestrator';
+import { ToolsOrchestrator, EngineRun } from './tools-orchestrator';
 import { FindingsDeduplicator } from './deduplicator';
 import { SemanticFilter } from './semantic-filter';
 import { resolveProvider, resolveApiKey } from './env-key';
 
-dotenv.config();
+// `quiet` suppresses dotenvx's "injected env (1) from .env" banner, which it
+// writes to STDOUT at import time. That banner was the first line of every
+// `--json` report and made the output unparseable before anything else ran.
+dotenv.config({ quiet: true });
 
 const program = new Command();
 
+/**
+ * Human-facing progress output.
+ *
+ * Silenced by `--json`, because it was previously interleaved with the report
+ * on stdout and made `--json` unparseable — the first line of the "JSON" was
+ * `Mock mode (pattern-based detection).`. Anything a machine consumes goes to
+ * stdout alone; anything a person reads goes through here.
+ */
+let quietHumanOutput = false;
+function say(msg = ''): void {
+  if (!quietHumanOutput) console.log(msg);
+}
+
 program
   .name('glance-scanner')
-  .description('Semantic security scanner for AI agents. Mock mode by default — no API costs.')
+  .description('Security scanner for AI agents. Static analysis by default (semgrep + npm audit), no API key needed.')
   .version(require('../package.json').version);
 
 
@@ -26,7 +42,8 @@ program
 // ── install-tools command ──────────────────────────────────────────────────
 program
   .command('install-tools')
-  .description('Install missing Python security tools (detect-secrets, bandit, pylint, pip-audit)')
+  .description('Install missing security tools (semgrep, detect-secrets, bandit, pylint, pip-audit)')
+  .option('--semgrep', 'Install only semgrep (powers the default no-API-key scan)')
   .option('--secrets', 'Install only detect-secrets')
   .option('--bandit', 'Install only bandit')
   .option('--linting', 'Install only pylint')
@@ -36,6 +53,7 @@ program
       const orchestrator = new ToolsOrchestrator();
 
       const selected: string[] = [];
+      if (options.semgrep) selected.push('semgrep');
       if (options.secrets) selected.push('detect-secrets');
       if (options.bandit) selected.push('bandit');
       if (options.linting) selected.push('pylint');
@@ -54,7 +72,8 @@ program
       }
       if (result.failed.length > 0) {
         console.log(`  ✗ Failed: ${result.failed.join(', ')}`);
-        console.log('    Try: python3 -m pip install --user ' + result.failed.join(' '));
+        // Never "Try: <the command that just failed>". Print the cause.
+        for (const line of result.advice) console.log(`    ${line}`);
       }
 
       console.log('');
@@ -88,7 +107,9 @@ program
   .option('-v, --verbose', 'Show code context around each finding')
   .action(async (options) => {
     try {
-      // Default to mock mode (pattern-based). Only use AI if user explicitly opts in.
+      quietHumanOutput = !!options.json;
+
+      // Default to real static analysis. AI is opt-in and needs a key.
       const useAI = options.ai || options.semantic || options.semanticOnly;
 
       // Pre-check AI key before constructing, friendly error with provider links
@@ -101,14 +122,17 @@ program
         }
       }
 
-      const analyzer = useAI ? new AIAnalyzer() : new MockAnalyzer();
-      if (!useAI) {
-        console.log('Mock mode (pattern-based detection). Add --ai for semantic analysis.\n');
-      } else {
+      const aiAnalyzer = useAI ? new AIAnalyzer() : null;
+      const staticAnalyzer = useAI ? null : new StaticAnalyzer();
+      if (useAI) {
         const provider = resolveProvider();
         const resolved = resolveApiKey(provider);
         const via = resolved.source === 'ANTHROPIC_API_KEY' ? ' (via ANTHROPIC_API_KEY)' : '';
-        console.log(`AI analysis enabled via ${provider}${via}. Set AI_PROVIDER to switch.\n`);
+        say(`AI analysis enabled via ${provider}${via}. Set AI_PROVIDER to switch.\n`);
+      } else if (staticAnalyzer!.needsRuleDownload()) {
+        // Disclosed, not buried: the only time semgrep touches the network.
+        say('First semgrep run on this machine: rules will be downloaded to ~/.semgrep.');
+        say('Later runs use that cache and need no network.\n');
       }
 
       const cache = new CacheManager();
@@ -122,11 +146,11 @@ program
         const availability = orchestrator.checkToolAvailability();
         const missing = availability.filter((t) => !t.installed);
         if (missing.length > 0) {
-          console.log('⚠️  Some tools are not installed:');
+          say('⚠️  Some tools are not installed:');
           for (const t of missing) {
-            console.log(`   → ${t.name}`);
+            say(`   → ${t.name}`);
           }
-          console.log('   Run: glance-scanner install-tools\n');
+          say('   Run: glance-scanner install-tools\n');
         }
       }
 
@@ -137,13 +161,13 @@ program
       // --repo flag: clone to tmp, scan, clean up
       if (options.repo) {
         const repoDir = path.join('/tmp', `glance-repo-${Date.now()}`);
-        console.log(`📦 Cloning ${options.repo}...`);
+        say(`📦 Cloning ${options.repo}...`);
         const { execSync } = require('child_process');
         execSync(`git clone --depth 1 ${options.repo} ${repoDir}`, { stdio: 'pipe' });
         files = getFilesRecursive(repoDir);
         scanDir = repoDir;
         cleanupDirs.push(repoDir);
-        console.log(`   ${files.length} files found.\n`);
+        say(`   ${files.length} files found.\n`);
       } else if (options.file) {
         files = [options.file];
         scanDir = path.dirname(options.file);
@@ -155,39 +179,73 @@ program
         process.exit(1);
       }
 
-      console.log(`Scanning ${files.length} file(s)...\n`);
+      say(`Scanning ${files.length} file(s)...\n`);
       if (semanticFilter) {
-        console.log('🔍 Semantic filtering ENABLED (reduces false positives)\n');
+        say('🔍 Semantic filtering ENABLED (reduces false positives)\n');
       }
 
       let allSemanticFindings: any[] = [];
       let allToolFindings: any[] = [];
+      let engineRuns: EngineRun[] = [];
+
+      // Static engines run ONCE over the whole scan, not per file: semgrep
+      // pays ~2.5s of startup per invocation, and npm audit is a property of a
+      // directory. Only the AI path is per-file, because that is an API call
+      // per file and the cache is keyed on file content.
+      if (!useAI) {
+        const { findings: staticFindings, engines } = await staticAnalyzer!.scan(files, scanDir, {
+          disposableTree: Boolean(options.repo),
+        });
+        allToolFindings.push(...staticFindings);
+        engineRuns = engines;
+
+        say('Static analysis (no API key). Add --ai for semantic analysis.');
+        for (const line of StaticAnalyzer.describe(engines)) say(line);
+        say('');
+
+        // A warning here means part of the scan did not happen. It goes to
+        // stderr as well, because a warning that only ever appears above a
+        // report is a warning that gets scrolled past.
+        for (const e of engines) {
+          for (const w of e.warnings || []) console.error(`warning: ${e.name}: ${w}`);
+          if (!e.ran && /scanned 0 of/.test(e.reason || '')) console.error(`warning: ${e.name}: ${e.reason}`);
+        }
+
+        if (!engines.some((e) => e.ran)) {
+          // Nothing was available. Say so plainly and stop. There is no
+          // fallback to fabricated output.
+          say('No static analysis engine is available, so nothing was scanned.');
+          say('  Install one: glance-scanner install-tools --semgrep');
+          say('  Or add --ai with an AI_API_KEY for semantic analysis.');
+        }
+      }
 
       for (const file of files) {
         if (!fs.existsSync(file)) continue;
         const code = fs.readFileSync(file, 'utf-8');
 
-        // Run analyzer (mock = pattern detection, AI = semantic analysis)
-        let semanticResult;
-        if (options.cache !== false) {
-          semanticResult = await cache.get(code);
-        }
-
-        if (!semanticResult) {
-          console.log(`⏳ ${file}...`);
-          semanticResult = await analyzer.analyze(code, file);
-
+        if (useAI) {
+          let semanticResult;
           if (options.cache !== false) {
-            await cache.set(code, semanticResult);
+            semanticResult = await cache.get(code);
           }
-        }
 
-        // Inject file path into each finding
-        const findWithFile = (semanticResult.findings || []).map((f: any) => ({
-          ...f,
-          file: file,
-        }));
-        allSemanticFindings.push(...findWithFile);
+          if (!semanticResult) {
+            say(`⏳ ${file}...`);
+            semanticResult = await aiAnalyzer!.analyze(code, file);
+
+            if (options.cache !== false) {
+              await cache.set(code, semanticResult);
+            }
+          }
+
+          // Inject file path into each finding
+          const findWithFile = (semanticResult.findings || []).map((f: any) => ({
+            ...f,
+            file: file,
+          }));
+          allSemanticFindings.push(...findWithFile);
+        }
 
         // Tool-based scans (always available, no AI needed)
         const toolOptions = {
@@ -206,14 +264,14 @@ program
 
       // Apply semantic filter if enabled
       if (semanticFilter && allToolFindings.length > 0) {
-        console.log(`\n🧠 Filtering ${allToolFindings.length} findings with AI...\n`);
+        say(`\n🧠 Filtering ${allToolFindings.length} findings with AI...\n`);
         const filteredFindings = await semanticFilter.filterFindings(
           allToolFindings,
           files.map((f) => { try { return fs.readFileSync(f, 'utf-8'); } catch { return ''; } }).join('\n---\n')
         );
 
         const fpCount = filteredFindings.filter((f) => !f.isRealVulnerability).length;
-        console.log(`  ${fpCount} likely false positives filtered out.\n`);
+        say(`  ${fpCount} likely false positives filtered out.\n`);
 
         allToolFindings = filteredFindings
           .filter((f) => f.isRealVulnerability)
@@ -231,7 +289,10 @@ program
       const report = deduplicator.generateReport(unifiedFindings);
 
       if (options.json) {
-        console.log(deduplicator.generateJSON(report));
+        // `engines` rides along so a machine consumer can tell a clean scan
+        // from a scan that did not happen. Without it, `findings: []` is
+        // ambiguous in exactly the way this work exists to fix.
+        console.log(deduplicator.generateJSON({ ...report, engines: engineRuns }));
       } else {
         printUnifiedReport(report, options.verbose ? files : []);
       }

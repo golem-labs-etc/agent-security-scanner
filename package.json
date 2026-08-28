@@ -1,13 +1,14 @@
 {
   "name": "glance-scanner",
   "version": "1.2.1",
-  "description": "Semantic security scanner for AI agents. Reads skills, MCP servers, hooks and repositories an agent has been pointed at.",
+  "description": "Security scanner for AI agents. Static analysis by default (semgrep + npm audit), no API key. Optional AI semantic analysis on your own provider key.",
   "main": "dist/cli.js",
   "bin": {
     "glance-scanner": "dist/cli.js"
   },
   "files": [
     "dist/",
+    "rules/",
     "LICENSE",
     "README.md",
     "package.json"
@@ -15,7 +16,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/cli.ts",
-    "test": "node tests/validate.js",
+    "test": "node tests/validate.js && node tests/semgrep-skip.js",
     "start": "node dist/cli.js"
   },
   "repository": {
