@@ -44,10 +44,17 @@ export class StaticAnalyzer {
    * per-file analyzer loop made sense for an API call per file and makes none
    * here.
    */
-  async scan(files: string[], scanDir: string): Promise<{ findings: ToolFinding[]; engines: EngineRun[] }> {
+  async scan(
+    files: string[],
+    scanDir: string,
+    opts: { disposableTree?: boolean } = {}
+  ): Promise<{ findings: ToolFinding[]; engines: EngineRun[] }> {
     const [semgrep, npmAudit] = await Promise.all([
       this.orchestrator.runSemgrep(files),
-      this.orchestrator.runNpmAudit(scanDir),
+      // `disposableTree` is true only under --repo, where scanDir is a clone in
+      // /tmp that this process created and deletes. It is the one place npm
+      // audit is allowed to write a lockfile.
+      this.orchestrator.runNpmAudit(scanDir, { mayGenerateLockfile: opts.disposableTree === true }),
     ]);
 
     return {
@@ -56,12 +63,22 @@ export class StaticAnalyzer {
     };
   }
 
-  /** One line per engine, for the report header. Names names, states skips. */
+  /**
+   * One line per engine, for the report header. Names names, states skips, and
+   * prints any warning on its own indented line. A warning is never folded into
+   * the finding count: "5 findings" next to "skipped 40 of 45 files" is a
+   * different statement from "5 findings", and the user needs to see both.
+   */
   static describe(engines: EngineRun[]): string[] {
-    return engines.map((e) =>
-      e.ran
-        ? `  ${e.name}: ${e.findings} finding${e.findings === 1 ? '' : 's'}${e.ms ? ` in ${(e.ms / 1000).toFixed(1)}s` : ''}`
-        : `  ${e.name}: did not run — ${e.reason}`
-    );
+    const lines: string[] = [];
+    for (const e of engines) {
+      lines.push(
+        e.ran
+          ? `  ${e.name}: ${e.findings} finding${e.findings === 1 ? '' : 's'}${e.ms ? ` in ${(e.ms / 1000).toFixed(1)}s` : ''}`
+          : `  ${e.name}: did not run — ${e.reason}`
+      );
+      for (const w of e.warnings || []) lines.push(`    warning: ${w}`);
+    }
+    return lines;
   }
 }

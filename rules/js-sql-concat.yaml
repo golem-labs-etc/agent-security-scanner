@@ -1,0 +1,117 @@
+rules:
+  # Why this rule exists.
+  #
+  # semgrep's p/default misses SQL injection built by string concatenation in
+  # JavaScript. Measured, not assumed: p/default, p/javascript and
+  # p/sql-injection were each run against tests/snippet1_sql.js and all three
+  # returned zero findings. The equivalent Python (`"... = '%s'" % uid`) IS
+  # caught by p/default, so this is a JS-specific hole rather than a missing
+  # ruleset.
+  #
+  # Taint mode rather than a shape match, because "a string with SELECT in it
+  # is concatenated" is not by itself a vulnerability and flagging it would
+  # bury the real ones. The rule fires only when request data reaches the query
+  # argument of a database call.
+  #
+  # `focus-metavariable: $QUERY` is what keeps parameterised queries clean:
+  # in `db.query("SELECT ... WHERE id = ?", [req.params.id])` the tainted value
+  # is the params array, not $QUERY, so the rule does not fire. Without the
+  # focus this rule would flag the correct way of doing it, which is worse than
+  # missing the wrong way.
+  - id: glance-js-sql-injection
+    mode: taint
+    languages:
+      - javascript
+      - typescript
+    severity: ERROR
+    message: >-
+      SQL query built from request data. The value reaches the query argument of
+      a database call without being parameterised, so a crafted request can
+      change the statement. Pass the value as a bound parameter instead:
+      db.all("SELECT * FROM users WHERE id = ?", [id]).
+    metadata:
+      category: security
+      cwe:
+        - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      owasp:
+        - "A03:2021 - Injection"
+      references:
+        - https://cheatsheetseries.owasp.org/cheatsheets/Query_Parameterization_Cheat_Sheet.html
+      confidence: MEDIUM
+      likelihood: MEDIUM
+      impact: HIGH
+      subcategory:
+        - vuln
+      technology:
+        - javascript
+    pattern-sources:
+      - label: REQUEST
+        patterns:
+          - pattern-either:
+              - pattern: $REQ.params
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params.$FIELD
+              - pattern: $REQ.query.$FIELD
+              - pattern: $REQ.body.$FIELD
+              - pattern: $REQ.params[$FIELD]
+              - pattern: $REQ.query[$FIELD]
+              - pattern: $REQ.body[$FIELD]
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request|ctx|httpRequest)$
+      # The second label is what keeps this rule honest.
+      #
+      # Request data reaching a query is not on its own a finding: it is how
+      # every parameterised query works. What makes it injectable is the value
+      # being spliced into the statement text, and in JavaScript that is `+`.
+      #
+      # Measured on tests/agent-specific/09_safe_mcp_server.js: without this
+      # label the rule flagged a correctly parameterised `db.query(sql, [args])`
+      # whose table name is interpolated and validated against an allowlist.
+      # Semgrep OSS taint has no path-sensitive reasoning about a guard like
+      # `if (!ALLOWED_TABLES.includes(table)) return`, so it cannot see that the
+      # value is safe, and there is no way to teach it. Requiring `+` sidesteps
+      # the whole question and matches exactly the gap the README documents.
+      #
+      # The cost is stated rather than hidden: SQL built by template literal
+      # (`SELECT ... ${id}`) is not caught by this rule.
+      - label: SPLICED_INTO_SQL
+        requires: REQUEST
+        pattern: $A + $B
+    # Anything that turns the value back into a safe scalar ends the flow.
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      - pattern: $X.escape(...)
+      - pattern: $X.escapeId(...)
+    # Two groups, because the method name alone is not enough evidence.
+    #
+    # `.query()` and `.execute()` are database verbs on almost any receiver.
+    # `.get()`, `.run()`, `.all()`, `.exec()` are not: measured on NodeGoat, an
+    # earlier version of this rule flagged `needle.get(url, ...)` — a real SSRF,
+    # but not SQL injection, and reporting it under CWE-89 would be a false
+    # positive of exactly the kind this repo exists to avoid. So the generic
+    # verbs require a receiver that names a database.
+    pattern-sinks:
+      - requires: SPLICED_INTO_SQL
+        patterns:
+          - pattern-either:
+              - pattern: $DB.query($QUERY, ...)
+              - pattern: $DB.execute($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - requires: SPLICED_INTO_SQL
+        patterns:
+          - pattern-either:
+              - pattern: $DB.exec($QUERY, ...)
+              - pattern: $DB.all($QUERY, ...)
+              - pattern: $DB.get($QUERY, ...)
+              - pattern: $DB.run($QUERY, ...)
+              - pattern: $DB.each($QUERY, ...)
+              - pattern: $DB.prepare($QUERY, ...)
+              - pattern: $DB.raw($QUERY, ...)
+          - metavariable-regex:
+              metavariable: $DB
+              regex: (?i)(^|\.)([\w$]*db|sql\w*|conn\w*|pool|client|database|knex|sequelize|datastore)$
+          - focus-metavariable: $QUERY

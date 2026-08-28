@@ -8,6 +8,7 @@
   },
   "files": [
     "dist/",
+    "rules/",
     "LICENSE",
     "README.md",
     "package.json"
@@ -15,7 +16,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/cli.ts",
-    "test": "node tests/validate.js",
+    "test": "node tests/validate.js && node tests/semgrep-skip.js",
     "start": "node dist/cli.js"
   },
   "repository": {

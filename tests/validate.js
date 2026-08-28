@@ -8,17 +8,22 @@
  * This suite used to run against MockAnalyzer, which returned canned findings
  * keyed off substrings in these exact fixtures. It scored 5/5, and the score
  * meant nothing: it was measuring whether a fixture generator recognised the
- * fixtures it had been written for. Against real engines the same five files
- * score 2 detected, 1 known gap, 2 fixtures that contain nothing findable.
+ * fixtures it had been written for.
  *
- * So each case now records what is EXPECTED and, where something is not
- * detected, WHY. A known gap is printed as a gap, never quietly counted as a
- * pass. The suite fails on a regression — something that should be detected and
- * is not, or a false positive on the safe file — and not on a limitation that
- * is already written down in the README.
+ * Two of the fixtures then turned out to contain nothing a real engine could
+ * find — a redacted placeholder where a credential should be, and an XSS that
+ * existed only inside a comment. Those measured the fixtures rather than the
+ * scanner, so they were replaced with the real thing.
  *
- * Do not "fix" a failure here by moving a case to `known-gap`. If real coverage
- * drops, that is the suite doing its job.
+ * Each case records what is EXPECTED and, where something is not detected, WHY.
+ * A known gap is printed as a gap, never quietly counted as a pass. The suite
+ * fails on a regression — something that should be detected and is not, or a
+ * false positive on the safe file — and not on a limitation that is already
+ * written down in the README.
+ *
+ * Do not "fix" a failure here by moving a case to `known-gap`, and do not fix
+ * one by weakening a fixture. If real coverage drops, that is the suite doing
+ * its job.
  */
 
 const path = require('path');
@@ -27,18 +32,13 @@ const { spawn } = require('child_process');
 const TEST_CASES = [
   {
     file: 'snippet1_sql.js',
-    expect: 'known-gap',
-    why: 'SQL injection by string concatenation in JavaScript. semgrep p/default '
-       + 'has no rule for it; the equivalent in Python IS caught. Documented in '
-       + 'the README under Known gaps. --ai covers it.',
+    expect: 'detect',
+    expectedCategory: 'sql_injection',
   },
   {
     file: 'snippet2_secrets.js',
-    expect: 'nothing-findable',
-    why: 'The fixture holds `sk_live_REDACTED_FOR_DEMO`, which is not a credential '
-       + 'shape. No honest secret scanner can flag it, and one that did would be '
-       + 'matching the variable name rather than the value. Verified separately: '
-       + 'semgrep flags a realistically shaped Stripe key at the correct line.',
+    expect: 'detect',
+    expectedCategory: 'hardcoded_secrets',
   },
   {
     file: 'snippet3_path_traversal.js',
@@ -47,14 +47,22 @@ const TEST_CASES = [
   },
   {
     file: 'snippet4_xss.js',
-    expect: 'nothing-findable',
-    why: 'The XSS lives in an EJS template that exists only inside a comment on '
-       + 'line 12. The .js file passes user input to res.render, which is not by '
-       + 'itself a vulnerability. There is no template file on disk to scan.',
+    expect: 'detect',
+    expectedCategory: 'xss',
   },
   {
     file: 'snippet5_safe.js',
     expect: 'clean',
+  },
+  {
+    file: 'snippet6_sql_template.js',
+    expect: 'known-gap',
+    why: 'SQL injection built with a template literal rather than `+`. '
+       + 'rules/js-sql-concat.yaml requires concatenation on purpose: without '
+       + 'that requirement it flagged a correctly parameterised query in '
+       + 'tests/agent-specific/09_safe_mcp_server.js, because semgrep OSS taint '
+       + 'cannot see an allowlist guard. Zero false positives was worth this '
+       + 'case. --ai covers it.',
   },
 ];
 

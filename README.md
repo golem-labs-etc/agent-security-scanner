@@ -34,6 +34,7 @@ Two real static engines, no API key, no account:
 | Engine | Finds | Needs |
 | --- | --- | --- |
 | [semgrep](https://semgrep.dev) `p/default` | 1074 rules: injection, traversal, XSS, deserialisation, leaked credentials | one install, see below |
+| `rules/` in this repo | SQL injection built by string concatenation in JavaScript, which `p/default` misses | nothing, it ships here |
 | `npm audit` | dependencies with published advisories | a `package.json` and a lockfile |
 
 Every line number comes from the engine that found it. Nothing here recomputes
@@ -45,12 +46,25 @@ The scan names both engines every time it runs, and says why either one did not:
 
 ```
 Static analysis (no API key). Add --ai for semantic analysis.
-  semgrep (p/default): 23 findings in 19.4s
+  semgrep (p/default + glance rules): 23 findings in 19.4s
   npm audit: 144 findings in 2.1s
 ```
 
 If neither is available it says so and returns nothing. It never falls back to
 invented output.
+
+**A partial scan is never printed as a clean one.** semgrep applies its own
+ignore list, and pointed at a directory it can decline to open a single file
+while still exiting 0 with "Findings: 0". So the number of files semgrep says
+it scanned is checked against the number it was given, and any shortfall is
+printed as a warning naming the paths — on stderr as well as in the report, and
+in `--json` under `engines`. If it scanned nothing at all, the engine is
+reported as not having run:
+
+```
+  semgrep: did not run — scanned 0 of 1 path(s) — semgrep skipped everything it
+  was given. This is NOT a clean result.
+```
 
 ### Installing semgrep
 
@@ -62,21 +76,37 @@ The first semgrep run downloads its rules to `~/.semgrep`. After that it runs
 with no network at all. The CLI tells you when that download is about to happen.
 `--metrics=off` is passed on every invocation, always.
 
+If `pip` refuses with `externally-managed-environment`, that is
+[PEP 668](https://peps.python.org/pep-0668/): your Python is managed by
+Homebrew or your distribution and pip will not write into it. `--user` fails the
+same way, so re-running pip is not the fix. `install-tools` detects this,
+retries through pipx — which puts semgrep in its own virtualenv, which PEP 668
+allows — and if pipx is missing or fails it names the interpreter to install
+rather than repeating the command that just failed.
+
 ### Known gaps, so you are not surprised by them
 
 Measured, not assumed:
 
-- **SQL injection by string concatenation in JavaScript is missed.**
-  `"SELECT * FROM users WHERE id = '" + req.query.id + "'"` produces no finding.
-  The equivalent in Python (`"... = '%s'" % uid`) *is* caught. If SQL injection
-  in JS matters to you, use `--ai`.
-- `npm audit` is skipped when a project has a `package.json` but no lockfile,
-  rather than generating one. Run `npm install --package-lock-only` yourself if
-  you want it covered; a scanner should not write files into the tree it was
-  pointed at.
+- **SQL injection built with a template literal is missed.**
+  ``db.all(`SELECT * FROM orders WHERE id = ${req.params.id}`)`` produces no
+  finding. The `+` form — `"SELECT * FROM users WHERE id = '" + id + "'"` —
+  *is* caught, by `rules/js-sql-concat.yaml` in this repository, which
+  `p/default` misses. That rule requires `+` on purpose: without the
+  requirement it flagged a correctly parameterised query whose table name is
+  interpolated and validated against an allowlist, because semgrep's open-source
+  taint analysis cannot see a guard like `if (!ALLOWED.includes(t)) return`.
+  Zero false positives was worth the template-literal case. `--ai` covers it.
+- `npm audit` is skipped when a project has a `package.json` but no lockfile.
+  A scanner should not write files into the tree you pointed it at, so run
+  `npm install --package-lock-only` yourself if you want it covered. The one
+  exception is `--repo`, where the tree is a shallow clone in `/tmp` that this
+  process made and deletes: there the lockfile is generated for you, with
+  `--ignore-scripts`, and the report says it happened.
 - semgrep's own `.semgrepignore` excludes test directories and untracked files
   when it is given a directory. glance-scanner passes explicit file paths
-  instead, so what you asked to scan is what gets scanned.
+  instead, so what you asked to scan is what gets scanned, and it checks
+  semgrep's own count of scanned files afterwards.
 - Neither engine reasons about intent. A parameterised query that merely looks
   like concatenation, or a test fixture that looks like a leaked key, will still
   be reported. `--ai --filter-fp` is the pass that drops those.
@@ -87,9 +117,9 @@ README does not quote one.
 ## What you get with a key
 
 Semantic analysis reads the code the way a reviewer would. It reasons about
-intent rather than shape, so it covers the gaps above — including the JavaScript
-SQL concatenation case semgrep misses. It costs whatever your provider charges,
-which for a small repository is cents.
+intent rather than shape, so it covers the gaps above — including SQL built with
+a template literal. It costs whatever your provider charges, which for a small
+repository is cents.
 
 `AI_API_KEY` is **your AI provider's key**, not a Glance account. There is no
 Glance signup and nothing to pay us for. Get a key from

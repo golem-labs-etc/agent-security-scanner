@@ -7,7 +7,7 @@ import * as dotenv from 'dotenv';
 import { AIAnalyzer } from './analyzer';
 import { StaticAnalyzer } from './static-analyzer';
 import { CacheManager } from './cache';
-import { ToolsOrchestrator } from './tools-orchestrator';
+import { ToolsOrchestrator, EngineRun } from './tools-orchestrator';
 import { FindingsDeduplicator } from './deduplicator';
 import { SemanticFilter } from './semantic-filter';
 import { resolveProvider, resolveApiKey } from './env-key';
@@ -72,7 +72,8 @@ program
       }
       if (result.failed.length > 0) {
         console.log(`  ✗ Failed: ${result.failed.join(', ')}`);
-        console.log('    Try: python3 -m pip install --user ' + result.failed.join(' '));
+        // Never "Try: <the command that just failed>". Print the cause.
+        for (const line of result.advice) console.log(`    ${line}`);
       }
 
       console.log('');
@@ -185,18 +186,30 @@ program
 
       let allSemanticFindings: any[] = [];
       let allToolFindings: any[] = [];
+      let engineRuns: EngineRun[] = [];
 
       // Static engines run ONCE over the whole scan, not per file: semgrep
       // pays ~2.5s of startup per invocation, and npm audit is a property of a
       // directory. Only the AI path is per-file, because that is an API call
       // per file and the cache is keyed on file content.
       if (!useAI) {
-        const { findings: staticFindings, engines } = await staticAnalyzer!.scan(files, scanDir);
+        const { findings: staticFindings, engines } = await staticAnalyzer!.scan(files, scanDir, {
+          disposableTree: Boolean(options.repo),
+        });
         allToolFindings.push(...staticFindings);
+        engineRuns = engines;
 
         say('Static analysis (no API key). Add --ai for semantic analysis.');
         for (const line of StaticAnalyzer.describe(engines)) say(line);
         say('');
+
+        // A warning here means part of the scan did not happen. It goes to
+        // stderr as well, because a warning that only ever appears above a
+        // report is a warning that gets scrolled past.
+        for (const e of engines) {
+          for (const w of e.warnings || []) console.error(`warning: ${e.name}: ${w}`);
+          if (!e.ran && /scanned 0 of/.test(e.reason || '')) console.error(`warning: ${e.name}: ${e.reason}`);
+        }
 
         if (!engines.some((e) => e.ran)) {
           // Nothing was available. Say so plainly and stop. There is no
@@ -276,7 +289,10 @@ program
       const report = deduplicator.generateReport(unifiedFindings);
 
       if (options.json) {
-        console.log(deduplicator.generateJSON(report));
+        // `engines` rides along so a machine consumer can tell a clean scan
+        // from a scan that did not happen. Without it, `findings: []` is
+        // ambiguous in exactly the way this work exists to fix.
+        console.log(deduplicator.generateJSON({ ...report, engines: engineRuns }));
       } else {
         printUnifiedReport(report, options.verbose ? files : []);
       }

@@ -1,12 +1,40 @@
 import { spawn, execSync } from 'child_process';
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 
 function chunkArray<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
+}
+
+/**
+ * The rules this repo ships itself, alongside `p/default`.
+ *
+ * `__dirname` is `<pkg>/dist` when installed and `<pkg>/src` in development,
+ * so one level up finds `rules/` in both. `rules/` is in package.json `files`;
+ * if it ever falls out, this resolves to a missing directory and semgrep is
+ * run with p/default alone rather than failing.
+ */
+export const LOCAL_RULES_DIR = resolvePath(__dirname, '..', 'rules');
+
+/**
+ * Did semgrep actually look at this path?
+ *
+ * Covered means the exact file appears in `paths.scanned`, or — for a directory
+ * argument — at least one scanned file lives under it. The directory case
+ * matters: `paths.scanned` lists files, so a directory that was scanned in full
+ * would otherwise be reported as skipped.
+ */
+function isCovered(requested: string, scanned: Set<string>): boolean {
+  const abs = resolvePath(requested);
+  if (scanned.has(abs)) return true;
+  const prefix = abs.endsWith('/') ? abs : `${abs}/`;
+  for (const s of scanned) {
+    if (s.startsWith(prefix)) return true;
+  }
+  return false;
 }
 
 /** npm audit severities, as emitted in `.vulnerabilities[pkg].severity`. */
@@ -39,6 +67,12 @@ export interface EngineRun {
   ran: boolean;
   /** Present when `ran` is false. Stated to the user verbatim. */
   reason?: string;
+  /**
+   * Things that happened during a run that ran. Printed with the engine line
+   * and never swallowed: a partial scan reported as a clean one is the failure
+   * this field exists to prevent.
+   */
+  warnings?: string[];
   findings: number;
   ms?: number;
 }
@@ -177,10 +211,21 @@ export class ToolsOrchestrator {
   }
 
   /**
-   * Install Python tools via pip (user scope). Skips ones already available.
-   * Returns the list of tools that were installed or already present.
+   * Install the Python tools. Skips ones already available.
+   *
+   * `advice` carries the reason a tool failed, in the user's words rather than
+   * pip's. It exists because of a real failure on this machine: `pip install
+   * semgrep` died with an `externally-managed-environment` error, PEP 668, and
+   * the message the CLI printed was `Try: python3 -m pip install --user
+   * semgrep` — the exact command that had just failed, and would fail again.
+   * Silence about the cause sends people to a Tier 2 tool instead.
    */
-  installTools(tools?: string[]): { installed: string[]; alreadyPresent: string[]; failed: string[] } {
+  installTools(tools?: string[]): {
+    installed: string[];
+    alreadyPresent: string[];
+    failed: string[];
+    advice: string[];
+  } {
     const availability = this.checkToolAvailability();
     const wanted = (tools && tools.length > 0)
       ? tools.map((t) => t.toLowerCase())
@@ -189,6 +234,7 @@ export class ToolsOrchestrator {
     const installed: string[] = [];
     const alreadyPresent: string[] = [];
     const failed: string[] = [];
+    const advice: string[] = [];
 
     const pipPkgs: Record<string, string> = {
       'semgrep': 'semgrep',
@@ -208,26 +254,110 @@ export class ToolsOrchestrator {
       const pkg = pipPkgs[name];
       if (!pkg) {
         failed.push(name);
+        advice.push(`${name}: not a tool this command knows how to install.`);
         continue;
       }
 
-      try {
-        console.log(`  Installing ${name}...`);
-        execSync(`${this.pythonBin} -m pip install --user --quiet ${pkg}`, { stdio: 'pipe' });
+      console.log(`  Installing ${name}...`);
+      const outcome = this.installOne(pkg);
+      if (outcome.ok) {
         installed.push(name);
-      } catch {
-        try {
-          // Retry without --user (some envs disallow user installs)
-          console.log(`  Retry without --user for ${name}...`);
-          execSync(`${this.pythonBin} -m pip install --quiet ${pkg}`, { stdio: 'pipe' });
-          installed.push(name);
-        } catch {
-          failed.push(name);
-        }
+      } else {
+        failed.push(name);
+        advice.push(...outcome.advice.map((line) => `${name}: ${line}`));
       }
     }
 
-    return { installed, alreadyPresent, failed };
+    return { installed, alreadyPresent, failed, advice: [...new Set(advice)] };
+  }
+
+  /**
+   * pip, then pipx, and a stated reason when neither works.
+   *
+   * PEP 668 marks a distro- or Homebrew-managed interpreter as
+   * "externally managed" and pip refuses to write into it at all. That is not a
+   * fixable pip invocation: `--user` fails the same way. pipx is the answer
+   * because it puts the tool in its own virtualenv, which PEP 668 permits.
+   */
+  private installOne(pkg: string): { ok: boolean; advice: string[] } {
+    const attempt = (cmd: string): { ok: boolean; err: string } => {
+      try {
+        execSync(cmd, { stdio: 'pipe' });
+        return { ok: true, err: '' };
+      } catch (e: any) {
+        return { ok: false, err: `${e?.stderr?.toString() || ''}${e?.stdout?.toString() || ''}${e?.message || ''}` };
+      }
+    };
+    const have = (bin: string): boolean => {
+      try { execSync(`command -v ${bin}`, { stdio: 'pipe' }); return true; } catch { return false; }
+    };
+
+    const pip = attempt(`${this.pythonBin} -m pip install --user --quiet ${pkg}`);
+    if (pip.ok) return { ok: true, advice: [] };
+
+    const pep668 = /externally[- ]managed|PEP 668/i.test(pip.err);
+    if (!pep668) {
+      // Some environments disallow user installs but allow the plain form.
+      // Only worth trying when PEP 668 is NOT the cause; under PEP 668 it fails
+      // identically and just wastes the user's time.
+      const plain = attempt(`${this.pythonBin} -m pip install --quiet ${pkg}`);
+      if (plain.ok) return { ok: true, advice: [] };
+    }
+
+    const why = pep668
+      ? 'pip cannot install here: this Python is marked externally managed (PEP 668), '
+        + 'so pip refuses to write into it and --user fails the same way. '
+        + 'pipx installs the tool into its own virtualenv, which PEP 668 allows.'
+      : 'pip install failed.';
+
+    if (!have('pipx')) {
+      return {
+        ok: false,
+        advice: [
+          why,
+          'pipx is not installed. Install it, then re-run this command:',
+          '  brew install pipx        (macOS)',
+          '  sudo apt install pipx    (Debian/Ubuntu)',
+        ],
+      };
+    }
+
+    console.log(`  pip is blocked (PEP 668). Retrying ${pkg} with pipx...`);
+    const viaPipx = attempt(`pipx install ${pkg}`);
+    if (viaPipx.ok) return { ok: true, advice: [] };
+
+    // Last resort: an older interpreter. Not a version guess — the default one
+    // has already been tried and rejected the package for some reason of its
+    // own, so pin pipx to one that is known to have wheels.
+    const alternates = ['python3.13', 'python3.12', 'python3.11'];
+    const present = alternates.filter(have);
+    for (const interp of present) {
+      console.log(`  Retrying ${pkg} with pipx --python ${interp}...`);
+      if (attempt(`pipx install ${pkg} --python ${interp}`).ok) return { ok: true, advice: [] };
+    }
+
+    const detail = viaPipx.err.trim().split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 200) || 'no output';
+    if (present.length === 0) {
+      return {
+        ok: false,
+        advice: [
+          why,
+          `pipx also failed on the default interpreter (${detail.replace(/\s+/g, ' ')}), and no older`,
+          'interpreter is installed to fall back to. Install one and re-run:',
+          '  brew install python@3.12          (macOS)',
+          '  sudo apt install python3.12       (Debian/Ubuntu)',
+          `Then: pipx install ${pkg} --python python3.12`,
+        ],
+      };
+    }
+    return {
+      ok: false,
+      advice: [
+        why,
+        `pipx failed on the default interpreter and on ${present.join(', ')}.`,
+        `Last error: ${detail.replace(/\s+/g, ' ')}`,
+      ],
+    };
   }
 
   /**
@@ -410,17 +540,27 @@ export class ToolsOrchestrator {
    *
    * Runs whenever the scanned directory has a package.json AND a lockfile.
    *
-   * A missing lockfile is SKIPPED with a stated reason rather than repaired.
-   * `npm install --package-lock-only` would fix it, but it writes a
-   * package-lock.json into the directory being scanned and needs the network to
-   * do it. A security scanner that silently mutates the tree it was pointed at
-   * is a worse trade than one advisory line telling the owner the command.
+   * A missing lockfile is SKIPPED with a stated reason rather than repaired,
+   * with one exception. `npm install --package-lock-only` would fix it, but it
+   * writes a package-lock.json into the directory being scanned. A security
+   * scanner that silently mutates the tree it was pointed at is a worse trade
+   * than one advisory line telling the owner the command.
+   *
+   * The exception is `--repo`, where the tree is a shallow clone this process
+   * made in /tmp and deletes when it is done. Nothing there is the user's, so
+   * generating a lockfile costs them nothing and buys the whole dependency
+   * tier. `mayGenerateLockfile` is passed ONLY on that path — never for
+   * `--path` or `--file`, which point at a directory the user owns.
    *
    * Findings carry NO line number. A dependency advisory does not have one, and
    * inventing a `package.json:1` would be exactly the lie this work removes.
    */
-  async runNpmAudit(dirPath: string): Promise<{ findings: ToolFinding[]; run: EngineRun }> {
+  async runNpmAudit(
+    dirPath: string,
+    opts: { mayGenerateLockfile?: boolean } = {}
+  ): Promise<{ findings: ToolFinding[]; run: EngineRun }> {
     const started = Date.now();
+    const warnings: string[] = [];
     const skip = (reason: string): { findings: ToolFinding[]; run: EngineRun } => ({
       findings: [],
       run: { name: 'npm audit', ran: false, reason, findings: 0 },
@@ -429,7 +569,27 @@ export class ToolsOrchestrator {
     if (!dirPath || !existsSync(join(dirPath, 'package.json'))) {
       return skip('no package.json in the scanned directory');
     }
-    const hasLock = ['package-lock.json', 'npm-shrinkwrap.json'].some((f) => existsSync(join(dirPath, f)));
+    const lockNames = ['package-lock.json', 'npm-shrinkwrap.json'];
+    let hasLock = lockNames.some((f) => existsSync(join(dirPath, f)));
+
+    if (!hasLock && opts.mayGenerateLockfile) {
+      // Disposable clone only. `--ignore-scripts` because the clone is a
+      // repository off the internet and npm must not be allowed to run any of
+      // its code, `--package-lock-only` because nothing is installed.
+      const { error } = await this.runCmd(
+        'npm',
+        ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'],
+        dirPath,
+        180000
+      );
+      hasLock = lockNames.some((f) => existsSync(join(dirPath, f)));
+      if (!hasLock) {
+        const detail = (error || 'no output').trim().split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 160) || 'unknown';
+        return skip(`no lockfile, and generating one in the clone failed (${detail})`);
+      }
+      warnings.push('no lockfile in the repository; one was generated inside the temporary clone to enable this engine');
+    }
+
     if (!hasLock) {
       return skip('no package-lock.json (run `npm install --package-lock-only` in that directory to enable it)');
     }
@@ -475,7 +635,13 @@ export class ToolsOrchestrator {
 
     return {
       findings,
-      run: { name: 'npm audit', ran: true, findings: findings.length, ms: Date.now() - started },
+      run: {
+        name: 'npm audit',
+        ran: true,
+        findings: findings.length,
+        ms: Date.now() - started,
+        warnings: warnings.length ? warnings : undefined,
+      },
     };
   }
 
@@ -517,6 +683,11 @@ export class ToolsOrchestrator {
 
     const findings: ToolFinding[] = [];
     let failure: string | null = null;
+    const scanned = new Set<string>();
+    let sawScannedField = false;
+
+    const config = ['--config=p/default'];
+    if (existsSync(LOCAL_RULES_DIR)) config.push(`--config=${LOCAL_RULES_DIR}`);
 
     // Chunked so a large repo cannot overflow the OS argument limit. semgrep's
     // ~2.5s startup dominates, so chunks are kept large rather than per-file.
@@ -524,7 +695,7 @@ export class ToolsOrchestrator {
       const { output, error } = await this.runToolCmd(
         'semgrep',
         'semgrep',
-        ['--config=p/default', '--metrics=off', '--json', '--quiet', ...chunk],
+        [...config, '--metrics=off', '--json', '--quiet', ...chunk],
         undefined,
         300000
       );
@@ -535,6 +706,13 @@ export class ToolsOrchestrator {
       } catch {
         failure = (error || 'no output').trim().split('\n').slice(-1)[0].slice(0, 160);
         continue;
+      }
+
+      // What semgrep says it actually looked at. Checked against what it was
+      // handed, below.
+      if (Array.isArray(data?.paths?.scanned)) {
+        sawScannedField = true;
+        for (const p of data.paths.scanned) scanned.add(resolvePath(String(p)));
       }
 
       for (const r of data?.results || []) {
@@ -557,9 +735,43 @@ export class ToolsOrchestrator {
     if (failure && findings.length === 0) {
       return { findings: [], run: { name: 'semgrep', ran: false, reason: `semgrep failed: ${failure}`, findings: 0 } };
     }
+
+    // THE SILENT ZERO.
+    //
+    // Pointed at `tests/`, semgrep scanned nothing and reported "Findings: 0"
+    // with exit status 0. Nothing in that output distinguishes "looked and
+    // found nothing" from "looked at nothing". The scanner passes explicit file
+    // paths now, which is what fixed it — but a clean scan that was never
+    // performed is the single most dangerous output this tool can produce, so
+    // it is checked rather than assumed.
+    const skipped = sawScannedField ? files.filter((f) => !isCovered(f, scanned)) : [];
+    const name = `semgrep (p/default${config.length > 1 ? ' + glance rules' : ''})`;
+
+    if (sawScannedField && skipped.length === files.length) {
+      return {
+        findings,
+        run: {
+          name: 'semgrep',
+          ran: false,
+          reason:
+            `scanned 0 of ${files.length} path(s) — semgrep skipped everything it was given. ` +
+            `This is NOT a clean result. First skipped: ${skipped.slice(0, 3).join(', ')}`,
+          findings: findings.length,
+          ms: Date.now() - started,
+        },
+      };
+    }
+
+    const warnings = skipped.length
+      ? [
+          `scanned ${files.length - skipped.length} of ${files.length} files; semgrep skipped ` +
+            `${skipped.length}: ${skipped.slice(0, 5).join(', ')}${skipped.length > 5 ? `, and ${skipped.length - 5} more` : ''}`,
+        ]
+      : undefined;
+
     return {
       findings,
-      run: { name: 'semgrep (p/default)', ran: true, findings: findings.length, ms: Date.now() - started },
+      run: { name, ran: true, findings: findings.length, ms: Date.now() - started, warnings },
     };
   }
 
