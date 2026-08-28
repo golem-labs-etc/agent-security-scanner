@@ -30,3 +30,8 @@ src/guard/
 tests/guard/
 guard/
 .WORKING
+
+# work order, not product docs
+SCANNER-REAL-FREE-TIER.md
+D5-SPEC.md
+CC-PROMPTS.md
