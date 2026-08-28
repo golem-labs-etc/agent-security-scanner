@@ -125,6 +125,24 @@ const SEMGREP_TAXONOMY: Array<[string, string]> = [
   ['open-redirect', 'unvalidated_redirect'],
 ];
 
+/**
+ * Strip the directory path semgrep bakes into the id of a local rule.
+ *
+ * Rules loaded from `--config=<dir>` are named after the path they came from,
+ * so ours arrived as
+ * `Users.eitan.agent-security-scanner.rules.glance-js-sql-injection` — the
+ * scanner's own install location, printed in the user's report. From npm it
+ * would be their node_modules path instead. Neither is information about their
+ * code.
+ *
+ * Anchored on our own `glance-` prefix rather than on `.rules.`, so a registry
+ * rule that happens to contain that word is left exactly as semgrep named it.
+ */
+function normalizeCheckId(checkId: string): string {
+  const m = checkId.match(/(?:^|\.)(glance-[a-z0-9-]+)$/);
+  return m ? m[1] : checkId;
+}
+
 function semgrepCategory(checkId: string): string {
   const id = checkId.toLowerCase();
   for (const [needle, taxonomy] of SEMGREP_TAXONOMY) {
@@ -619,14 +637,33 @@ export class ToolsOrchestrator {
         const advisories = Array.isArray(v?.via) ? v.via.filter((x: any) => x && typeof x === 'object') : [];
         const title = advisories[0]?.title || `Vulnerable via ${Array.isArray(v?.via) ? v.via.join(', ') : 'a dependency'}`;
         const url = advisories[0]?.url;
-        const range = v?.range ? ` (affected: ${v.range})` : '';
+
+        // The MATCHED advisory's own affected range, not `v.range`.
+        //
+        // `v.range` is npm's aggregate across every advisory for the package.
+        // On lodash 4.17.11 it reads `<=4.17.23`, spanning seven advisories,
+        // while the advisory named on the same line — GHSA-35jh-r3h4-6jhm,
+        // Command Injection — is `<4.17.21`. Printing the aggregate beside one
+        // advisory's title states something that advisory does not say. It
+        // also overstates: it implies 4.17.22 is vulnerable to the named issue
+        // when it is not.
+        //
+        // The aggregate is still worth having when there is no advisory object
+        // to read, which is what happens when a package is only affected
+        // transitively; it is labelled differently so the two cannot be
+        // confused.
+        const advisoryRange = advisories[0]?.range;
+        const range = advisoryRange
+          ? ` (affected: ${advisoryRange})`
+          : v?.range ? ` (package affected overall: ${v.range})` : '';
+        const alsoCount = advisories.length > 1 ? ` [+${advisories.length - 1} more advisor${advisories.length === 2 ? 'y' : 'ies'} for this package]` : '';
 
         findings.push({
           tool: 'npm-audit',
           severity: NPM_SEVERITY[String(v?.severity || '').toLowerCase()] || 'MEDIUM',
           file: join(dirPath, 'package.json'),
           // No line: an advisory is about a dependency, not a source location.
-          message: `${name}: ${title}${range}${url ? ` — ${url}` : ''}`,
+          message: `${name}: ${title}${range}${url ? ` — ${url}` : ''}${alsoCount}`,
           category: 'vulnerable_dependency',
           details: v,
         });
@@ -716,7 +753,7 @@ export class ToolsOrchestrator {
       }
 
       for (const r of data?.results || []) {
-        const checkId = String(r?.check_id || '');
+        const checkId = normalizeCheckId(String(r?.check_id || ''));
         const meta = r?.extra?.metadata || {};
         const refs = Array.isArray(meta.references) ? meta.references[0] : undefined;
         findings.push({

@@ -9,6 +9,10 @@ export interface UnifiedFinding {
   category: string;
   message: string;
   tools: string[];
+  /** Every rule that fired at this file and line, most specific name available. */
+  rules: string[];
+  /** Every taxonomy id contributed here. More than one means genuinely distinct problems. */
+  categories: string[];
   confidence?: 'HIGH' | 'MEDIUM' | 'LOW'; // Semantic filter confidence
   isFalsePositive?: boolean; // Marked by semantic filter
   filteringReasoning?: string; // Why semantic filter marked it as FP or real
@@ -39,13 +43,18 @@ export class FindingsDeduplicator {
           category: finding.pattern,
           message: finding.description || '',
           tools: ['semantic-analysis'],
+          rules: [finding.pattern].filter(Boolean),
+          categories: [finding.pattern].filter(Boolean),
           details: finding,
         });
       } else {
-        const existing = unified.get(key)!;
-        if (!existing.tools.includes('semantic-analysis')) {
-          existing.tools.push('semantic-analysis');
-        }
+        this.fold(unified.get(key)!, {
+          tool: 'semantic-analysis',
+          rule: finding.pattern,
+          category: finding.pattern,
+          severity: this.mapSeverity(finding.severity),
+          message: finding.description || '',
+        });
       }
     }
 
@@ -63,13 +72,18 @@ export class FindingsDeduplicator {
           category: finding.category || finding.tool,
           message: finding.message,
           tools: [finding.tool],
+          rules: [this.ruleName(finding)].filter(Boolean),
+          categories: [finding.category || finding.tool].filter(Boolean),
           details: finding.details,
         });
       } else {
-        const existing = unified.get(key)!;
-        if (!existing.tools.includes(finding.tool)) {
-          existing.tools.push(finding.tool);
-        }
+        this.fold(unified.get(key)!, {
+          tool: finding.tool,
+          rule: this.ruleName(finding),
+          category: finding.category || finding.tool,
+          severity: this.mapSeverity(finding.severity),
+          message: finding.message,
+        });
       }
     }
 
@@ -103,9 +117,54 @@ export class FindingsDeduplicator {
    * category". This makes that true rather than aspirational.
    */
   private generateKey(file: string, discriminator: string, line?: number): string {
-    const linePart = line ? `:${line}` : '';
     const filePart = (file || 'unknown').replace(/[^a-zA-Z0-9]/g, '_');
-    return `${filePart}::${discriminator.substring(0, 50).replace(/[^a-zA-Z0-9]/g, '_')}${linePart}`;
+
+    // A place in a file is one finding. Two semgrep rules firing on the same
+    // `res.send('<h1>' + req.query.q + '</h1>')` are two descriptions of one
+    // problem, and counting them twice inflates every total on a real repo.
+    if (line) return `${filePart}:${line}`;
+
+    // No line means a dependency advisory, where the file is always
+    // package.json. Collapsing on file alone would merge every advisory in a
+    // project into a single finding, so these keep the message as their
+    // discriminator.
+    return `${filePart}::${discriminator.substring(0, 50).replace(/[^a-zA-Z0-9]/g, '_')}`;
+  }
+
+  private static readonly SEVERITY_RANK: Record<string, number> = {
+    CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3,
+  };
+
+  /**
+   * Fold a second finding into one already held at this file and line.
+   *
+   * The most severe contributor supplies the headline: its severity, its
+   * category and its message. Everything else is preserved as a name in
+   * `rules` and `categories`, so a collapse never makes a distinct problem
+   * invisible. Two rules on one line CAN be genuinely different problems, and
+   * `categories` is what says so.
+   */
+  private fold(
+    existing: UnifiedFinding,
+    incoming: { tool: string; rule: string; category: string; severity: UnifiedFinding['severity']; message: string }
+  ): void {
+    if (!existing.tools.includes(incoming.tool)) existing.tools.push(incoming.tool);
+    if (incoming.rule && !existing.rules.includes(incoming.rule)) existing.rules.push(incoming.rule);
+    if (incoming.category && !existing.categories.includes(incoming.category)) {
+      existing.categories.push(incoming.category);
+    }
+
+    const rank = FindingsDeduplicator.SEVERITY_RANK;
+    if (rank[incoming.severity] < rank[existing.severity]) {
+      existing.severity = incoming.severity;
+      existing.category = incoming.category || existing.category;
+      existing.message = incoming.message || existing.message;
+    }
+  }
+
+  /** The rule that produced a finding, by the most specific name available. */
+  private ruleName(f: { details?: any; category?: string; tool?: string }): string {
+    return String(f.details?.check_id || f.category || f.tool || '').trim();
   }
 
   private mapSeverity(severity: string): 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' {

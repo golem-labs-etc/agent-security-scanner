@@ -5,6 +5,37 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
+## Unreleased
+
+### Changed
+
+- **Findings at the same file and line collapse into one.** Two semgrep rules
+  firing on one `res.send('<h1>' + req.query.q + '</h1>')` were two
+  descriptions of a single problem and were counted twice. Totals drop as a
+  result: the fixture corpus goes from 12 to 10, and a sample project from 6 to
+  5. Nothing is lost. Every contributing rule is listed on the finding under
+  `Rules:`, and when the collapsed rules disagree about what the problem is,
+  the extra taxonomy ids are printed beside the category as `(also: ...)`.
+  Dependency advisories, which have no line, still key on their message, so
+  two advisories against the same `package.json` stay two findings.
+- **`npm audit` findings quote the matched advisory's own affected range.**
+  They previously quoted `v.range`, npm's aggregate across every advisory for
+  that package. On lodash 4.17.11 that printed `<=4.17.23` beside
+  GHSA-35jh-r3h4-6jhm, whose actual range is `<4.17.21`, which overstated the
+  named issue by two patch versions. Where a package is affected only
+  transitively and no advisory object is available, the aggregate is still
+  shown, labelled `package affected overall:` so the two cannot be confused.
+  The count of further advisories for the same package is appended.
+
+### Fixed
+
+- **Local rule ids no longer carry the install path.** semgrep names a rule
+  loaded from `--config=<dir>` after that directory, so our own rule was
+  reported as `Users.<name>.agent-security-scanner.rules.glance-js-sql-injection`,
+  and from npm would have carried the user's `node_modules` path. It now reads
+  `glance-js-sql-injection`. Only ids matching our own `glance-` prefix are
+  rewritten; registry rules keep the name semgrep gave them.
+
 ## 1.3.0
 
 The default no-API-key scan now runs real static analysis engines. **What a
