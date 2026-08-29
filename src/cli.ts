@@ -11,6 +11,7 @@ import { ToolsOrchestrator, EngineRun } from './tools-orchestrator';
 import { FindingsDeduplicator } from './deduplicator';
 import { SemanticFilter } from './semantic-filter';
 import { resolveProvider, resolveApiKey } from './env-key';
+import { MARK } from './brand';
 
 // `quiet` suppresses dotenvx's "injected env (1) from .env" banner, which it
 // writes to STDOUT at import time. That banner was the first line of every
@@ -376,7 +377,7 @@ function printCodeContext(filePath: string, line: number, scannedFiles: string[]
 function printUnifiedReport(report: any, verboseFiles: string[] = []) {
   const { summary, findings } = report;
 
-  console.log('\n=== GLANCE SECURITY REPORT ===\n');
+  console.log(`\n=== ${MARK} GLANCE SECURITY REPORT ===\n`);
 
   console.log(`📊 Summary:`);
   console.log(`  Total Issues: ${summary.total}`);
