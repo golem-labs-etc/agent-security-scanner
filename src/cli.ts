@@ -73,7 +73,8 @@ program
       // engine can emit should not have to have something to scan.
       if (options.listCategories) {
         console.log(JSON.stringify({ schema: 1, categories: CATEGORIES }, null, 2));
-        process.exit(0);
+        process.exitCode = 0;
+        return;
       }
 
       const { policy, warnings } = resolvePolicy(options.policy);
@@ -111,7 +112,18 @@ program
       } else {
         printSurfaceReport(report, !!options.evidence);
       }
-      process.exit(report.counts.critical > 0 || report.counts.high > 0 ? 1 : 0);
+      // Set the code and return; do NOT call process.exit() here.
+      //
+      // process.exit() does not flush a pending asynchronous write. Writes to a
+      // terminal are synchronous, so this looks fine by hand; writes to a pipe
+      // are not, so any consumer that captures stdout gets the report truncated
+      // at one pipe buffer -- 64 KB, mid-JSON, with the exit code intact and
+      // stderr empty. Invisible in a terminal, invisible on small inputs, and
+      // certain on a large report read by a program. Returning lets node drain
+      // stdout and then exit with this code.
+      process.exitCode =
+        report.counts.critical > 0 || report.counts.high > 0 ? 1 : 0;
+      return;
     } catch (err: any) {
       console.error(`error: ${err.message}`);
       process.exit(2);

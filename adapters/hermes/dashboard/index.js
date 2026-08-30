@@ -145,12 +145,27 @@
       );
     });
 
+    // The scanner's own diagnosis, verbatim. "Last error" invited the reader
+    // to treat it as stale noise; this is the reason there is no fresh scan,
+    // and it names which of the four failures happened -- process would not
+    // start, non-zero exit with the scanner's own stderr, output that is not
+    // JSON, or not on PATH at all. Wrapped rather than clipped, because an
+    // errno message truncated at the pane edge is the message being withheld.
     if (stats.last_error) {
       kids.push(
         h(
           "p",
-          { key: "err", style: { color: SEVERITY_COLOR.high } },
-          "Last error: " + stats.last_error
+          {
+            key: "err",
+            style: {
+              color: SEVERITY_COLOR.high,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontFamily: "var(--font-mono, monospace)",
+              fontSize: "0.85em"
+            }
+          },
+          "Scan failed: " + stats.last_error
         )
       );
     }

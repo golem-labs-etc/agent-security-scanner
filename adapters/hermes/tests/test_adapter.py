@@ -1,4 +1,4 @@
-"""Verification suite for the Hermes adapter, V1 to V9.
+"""Verification suite for the Hermes adapter, V1 to V15.
 
 Every fixture is written by this file into a throwaway Hermes tree. Nothing is
 copied from any corpus.
@@ -442,6 +442,116 @@ def run_all(tmp: Path, scanner) -> int:
         f"evicted={evicted}, re-announced={repeats} "
         "(expected: yes, and it is in the README)",
     )
+
+    print()
+    print("V15 a failed scan says which failure it was")
+    # The pane once reported "unparseable scanner output" for a run where the
+    # parser was fine: the scanner had exited non-zero with a message on
+    # stderr. One string covered four unrelated conditions and named the least
+    # likely of them, so the reader debugs the wrong thing. This asserts the
+    # four are distinguishable, which is the property that decays silently --
+    # a later edit that collapses two of them back together breaks nothing
+    # else in this suite.
+    #
+    # Stub scanners are POSIX shell. macOS and Linux only, which is what the
+    # adapter targets.
+    stub_home = tmp / "v15-home"
+    make_clean_tree(stub_home)
+    bindir = tmp / "v15-bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+
+    def stub(name: str, body: str, mode: int = 0o755) -> Path:
+        q = bindir / name
+        q.write_text(body, encoding="utf-8")
+        q.chmod(mode)
+        return q
+
+    stubs = {
+        # Not installed at all. shutil.which fails before anything is spawned.
+        "absent": bindir / "does-not-exist-at-all",
+
+        # Present and executable, but execve refuses it: the interpreter named
+        # in the shebang is gone. This is the shape of a node script whose node
+        # was removed, and it passes shutil.which, so it reaches the spawn.
+        "spawn": stub("spawn-fail", "#!/nonexistent/interpreter\nexit 0\n"),
+
+        # Ran, objected, said why on stderr. The ENOENT-on-missing-inventory
+        # case Eitan reproduced is exactly this shape.
+        "exit2": stub(
+            "exit-2",
+            "#!/bin/sh\n"
+            "echo 'error: ENOENT: no such file or directory, open /nope.json' >&2\n"
+            "exit 2\n",
+        ),
+
+        # Ran, exited 0, printed something that is not JSON. The only case for
+        # which "unparseable" was ever the right word.
+        "garbage": stub("garbage", "#!/bin/sh\necho 'glance-scanner 0.1.0'\nexit 0\n"),
+
+        # Ran, exited 0, printed nothing. Empty stdout is not malformed stdout.
+        "silent": stub("silent", "#!/bin/sh\nexit 0\n"),
+
+        # Findings present: exit 1 with perfectly good JSON. Not a failure.
+        # This one guards the ordering -- parse first, consult the exit code
+        # only after the parse has already failed.
+        "found": stub(
+            "found",
+            "#!/bin/sh\n"
+            "echo '{\"schema\":1,\"policy\":\"strict\",\"total_scanned\":1,"
+            "\"counts\":{\"critical\":1,\"high\":0,\"medium\":0,\"info\":0},"
+            "\"warnings\":[],\"findings\":[{\"id\":\"v15aaaa\",\"category\":"
+            "\"hidden_instruction\",\"severity\":\"critical\",\"path\":\"/x\","
+            "\"line\":1}]}'\n"
+            "exit 1\n",
+        ),
+    }
+
+    saved_bin = runner.SCANNER_BIN
+    messages = {}
+    ok_found = False
+    try:
+        for key, path in stubs.items():
+            use_home(stub_home)
+            runner.SCANNER_BIN = str(path)
+            result = runner.run_scan(stub_home)
+            messages[key] = runner.stats()["last_error"]
+            if key == "found":
+                ok_found = result is not None and messages[key] is None
+    finally:
+        runner.SCANNER_BIN = saved_bin
+        use_home(stub_home)
+
+    # Each failure must name its own cause in words that point somewhere.
+    wanted = {
+        "absent": "not found on PATH",
+        "spawn": "cannot start",
+        "exit2": "exited 2",
+        "garbage": "not JSON",
+        "silent": "wrote nothing to stdout",
+    }
+    named = {k: (messages.get(k) or "") for k in wanted}
+    correct = {k: (v in named[k]) for k, v in wanted.items()}
+
+    # Distinctness is the actual requirement. Four right-sounding messages that
+    # happen to be equal are the bug that was just reported.
+    distinct = len(set(named.values())) == len(named) and all(named.values())
+
+    # The spawn failure has to carry the errno, or it says no more than the
+    # message it replaced.
+    has_errno = "errno" in named["spawn"]
+
+    # The non-zero exit has to carry the scanner's own first stderr line.
+    has_stderr = "ENOENT" in named["exit2"]
+
+    check(
+        "V15",
+        all(correct.values()) and distinct and has_errno and has_stderr and ok_found,
+        f"distinct={distinct}, errno in spawn={has_errno}, "
+        f"stderr in exit={has_stderr}, exit-1-with-JSON still a success={ok_found}",
+    )
+    for k in ("absent", "spawn", "exit2", "garbage", "silent"):
+        mark = "ok " if correct[k] else "BAD"
+        print(f"        {mark} {k:8s} {named[k]}")
 
     print()
     print("V9  hermes plugins doctor")

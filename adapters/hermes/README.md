@@ -29,7 +29,7 @@ dashboard/plugin_api.py      /health /stats (cache reads), /scan (explicit)
 dashboard/manifest.json
 dashboard/index.js           pane; classic script, polls /stats, never /scan
 skills/glance-security/      what the agent should do with a finding
-tests/test_adapter.py        V1–V12
+tests/test_adapter.py        V1–V12, V15
 tests/test_dashboard.py      V13–V14 (dashboard route + pane actually run)
 ```
 
@@ -160,6 +160,44 @@ copy drifts.
 
 `glance-scanner` on `PATH` (or `GLANCE_SCANNER_BIN` pointing at it). Without it
 the adapter reports that it is not scanning rather than pretending to.
+
+## When a scan fails, the message says which failure it was
+
+There are four unrelated ways a scan run can fail, and they want four different
+things done about them. They were once one string, `unparseable scanner
+output`, which named the rarest of the four and sent the reader after the
+parser while the actual fault was elsewhere.
+
+| What happened | What the pane says | What to do |
+|---|---|---|
+| not installed | `glance-scanner not found on PATH. Install glance-scanner, or set GLANCE_SCANNER_BIN to its full path.` | install it, or set the variable |
+| the process would not start | `cannot start glance-scanner: [errno 2 ENOENT] No such file or directory (<path>). The file or its interpreter is missing; check its shebang.` | the errno is the diagnosis |
+| it ran and objected | `glance-scanner exited 2: error: ENOENT: no such file or directory, open '<path>'` | its own first stderr line |
+| its output is not JSON | `glance-scanner exited 0 and wrote output that is not JSON: '<snippet>'` | genuinely a parse problem |
+
+The exit code is consulted **after** the parse, never before. A run that found
+something critical or high exits 1 with perfectly good JSON, and checking the
+code first would report every real detection as an error.
+
+`V15` asserts the four are distinguishable, and that the exit-1-with-JSON case
+is still a success. That is the property that decays quietly: four
+right-sounding messages that happen to be equal look fine in review.
+
+### The bug the old message was hiding
+
+`unparseable scanner output` was, in the end, accurate about the symptom and
+useless about the cause. The scanner called `process.exit()` immediately after
+writing its report. That does not flush a pending asynchronous write, and
+stdout to a pipe is asynchronous where stdout to a terminal is not, so every
+report over 64 KB reached this adapter truncated at exactly one pipe buffer,
+mid-JSON, with the exit code intact and stderr empty.
+
+It was invisible by hand, because a terminal flushes synchronously, and
+invisible on small inputs. It is fixed in the scanner (`src/cli.ts` sets
+`process.exitCode` and returns) and guarded by a check in `tests/surfaces.js`
+that runs the real binary over a real pipe on a report large enough to cross
+the buffer. A library-level test cannot see this class of bug: `scanSurfaces`
+was returning the right object throughout.
 
 ## Tests
 

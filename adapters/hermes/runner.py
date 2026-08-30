@@ -16,6 +16,7 @@ a time-to-live. Nothing changes between turns unless a file changes.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
@@ -40,6 +41,11 @@ SCANNER_BIN = os.environ.get("GLANCE_SCANNER_BIN", "glance-scanner")
 
 _LOCK_STALE_SECONDS = 300
 _SCAN_TIMEOUT_SECONDS = 180
+
+# How much of a diagnosis we keep. Long enough for a stack-ish stderr line,
+# short enough that it stays readable in a dashboard pane.
+_ERR_MAX = 500
+_STDOUT_SNIPPET = 160
 
 
 class _State:
@@ -130,6 +136,84 @@ def has_baseline(home: Optional[Path] = None) -> bool:
     return _baseline_path(home).exists()
 
 
+# --------------------------------------------------------- error reporting
+#
+# There are four distinct ways a scan run fails and they need four distinct
+# things done about them. Collapsing them into one message costs debugging
+# time: it names one cause, and the reader spends their afternoon on it.
+#
+#   not on PATH        install it, or set GLANCE_SCANNER_BIN
+#   spawn failure      it is there but the OS would not run it -- errno says why
+#   non-zero exit      it ran and objected -- its own stderr says why
+#   unparseable stdout it ran, exited 0, and printed something that is not JSON
+#
+# The last one is the only genuine "the parser is the problem" case, and it
+# should be rare. It was previously the label on all four.
+
+def _set_error(msg: Optional[str]) -> None:
+    """Store the diagnosis under the lock that `stats` reads it under."""
+    with _state.lock:
+        _state.last_error = msg[:_ERR_MAX] if msg else msg
+
+
+def _first_line(s: Optional[str]) -> str:
+    for line in (s or "").splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return ""
+
+
+def _spawn_error(exc: OSError) -> str:
+    """The process never started. The errno is the entire diagnosis.
+
+    Reached when the file passes `shutil.which` but `execve` refuses it: a
+    missing interpreter in the shebang, a permission bit dropped by a package
+    manager, a text file where a binary is expected. Nothing was run, so there
+    is no stdout to blame.
+    """
+    code = errno.errorcode.get(exc.errno, "?") if exc.errno is not None else "?"
+    target = getattr(exc, "filename", None) or SCANNER_BIN
+    hint = {
+        errno.ENOENT: "The file or its interpreter is missing; check its shebang.",
+        errno.EACCES: "It is not executable; chmod +x it.",
+        errno.ENOEXEC: "The OS would not execute it; check its shebang.",
+        errno.EISDIR: "That path is a directory.",
+    }.get(exc.errno, "")
+    msg = (
+        f"cannot start {SCANNER_BIN}: [errno {exc.errno} {code}] "
+        f"{exc.strerror or exc} ({target})"
+    )
+    return msg + (f". {hint}" if hint else "")
+
+
+def _output_error(proc: "subprocess.CompletedProcess") -> str:
+    """stdout would not parse. Say which of the two reasons that was.
+
+    Called only after the parse has already failed, so a findings run -- which
+    exits 1 with perfectly good JSON -- never reaches here. The exit code is
+    consulted after the parse, never before, or a run that found something
+    would be reported as an error.
+    """
+    err = _first_line(proc.stderr)
+    if proc.returncode != 0:
+        # The common case by far. The scanner ran, rejected its input or hit an
+        # error, and said so. Its own words are more useful than ours.
+        return (
+            f"{SCANNER_BIN} exited {proc.returncode}: "
+            + (err or "no output on stderr")
+        )
+    out = (proc.stdout or "").strip()
+    if not out:
+        return (
+            f"{SCANNER_BIN} exited 0 but wrote nothing to stdout"
+            + (f" (stderr: {err})" if err else "")
+        )
+    return (
+        f"{SCANNER_BIN} exited 0 and wrote output that is not JSON: {out[:_STDOUT_SNIPPET]!r}"
+    )
+
+
 # ---------------------------------------------------------------- locking
 
 def _acquire_lock(home: Optional[Path] = None) -> bool:
@@ -186,7 +270,10 @@ def run_scan(home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     digest = inventory_digest(inv)
 
     if not scanner_available():
-        _state.last_error = f"{SCANNER_BIN} not found on PATH"
+        _set_error(
+            f"{SCANNER_BIN} not found on PATH. Install glance-scanner, or set "
+            "GLANCE_SCANNER_BIN to its full path."
+        )
         return None
 
     fd, tmp = tempfile.mkstemp(prefix="glance-inv-", suffix=".json")
@@ -197,22 +284,41 @@ def run_scan(home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(inv, fh)
 
-        proc = subprocess.run(
-            [SCANNER_BIN, "surfaces", "--inventory", tmp, "--json",
-             "--policy", SCAN_POLICY],
-            capture_output=True,
-            text=True,
-            timeout=_SCAN_TIMEOUT_SECONDS,
-        )
-        # The CLI exits 1 when it found something. That is a result, not a
-        # failure; only a parse failure is a failure.
+        argv = [SCANNER_BIN, "surfaces", "--inventory", tmp, "--json",
+                "--policy", SCAN_POLICY]
+        try:
+            proc = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=_SCAN_TIMEOUT_SECONDS,
+            )
+        except OSError as exc:
+            # Never started. Distinct from anything the scanner could report,
+            # because the scanner did not run.
+            _set_error(_spawn_error(exc))
+            return None
+        except subprocess.TimeoutExpired:
+            _set_error(
+                f"{SCANNER_BIN} did not finish within {_SCAN_TIMEOUT_SECONDS}s "
+                "and was killed. No result was read."
+            )
+            return None
+        except subprocess.SubprocessError as exc:
+            _set_error(f"cannot run {SCANNER_BIN}: {type(exc).__name__}: {exc}")
+            return None
+
+        # The CLI exits 1 when it found something critical or high. That is a
+        # result, not a failure, so success is defined by the parse and the
+        # exit code is only consulted once the parse has already failed.
         try:
             report = json.loads(proc.stdout)
         except ValueError:
-            _state.last_error = (proc.stderr or "unparseable scanner output")[:500]
+            _set_error(_output_error(proc))
             return None
-    except (OSError, subprocess.SubprocessError) as exc:
-        _state.last_error = str(exc)[:500]
+    except OSError as exc:
+        # Writing the inventory temp file failed. Also not the scanner.
+        _set_error(f"cannot write the inventory file: {exc}")
         return None
     finally:
         try:
@@ -259,7 +365,7 @@ def _scan_worker(home: Optional[Path]) -> None:
     try:
         run_scan(root)
     except Exception as exc:  # never let a thread death be silent
-        _state.last_error = str(exc)[:500]
+        _set_error(f"scan thread failed: {type(exc).__name__}: {exc}")
     finally:
         _release_lock(root)
         with _state.lock:
