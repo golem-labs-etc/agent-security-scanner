@@ -37,3 +37,7 @@ D5-SPEC.md
 CC-PROMPTS.md
 STORY-KB.md
 NET-FACTORY-SPEC.md
+
+# Python bytecode from the adapters
+__pycache__/
+*.pyc

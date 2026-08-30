@@ -1,0 +1,16 @@
+{
+  "name": "glance-surfaces",
+  "version": "0.1.0",
+  "title": "Glance surfaces",
+  "description": "Agent-surface findings for this Hermes install: MCP server configs and skill files.",
+  "api_prefix": "/api/plugins/glance-surfaces",
+  "routes": [
+    { "method": "GET", "path": "/health", "reads": "cache" },
+    { "method": "GET", "path": "/stats", "reads": "cache" },
+    { "method": "POST", "path": "/scan", "starts": "background scan" }
+  ],
+  "pane": {
+    "entry": "desktop/plugin.js",
+    "poll": { "path": "/stats", "interval_ms": 30000 }
+  }
+}

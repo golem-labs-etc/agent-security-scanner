@@ -58,12 +58,24 @@ program
     'Include matched text on each finding. Off by default: the caller is sometimes an LLM prompt.'
   )
   .option(
+    '--list-categories',
+    'Print the categories this engine can emit, as JSON, and exit. Consumers build their maps from this rather than keeping a copy that drifts.'
+  )
+  .option(
     '--policy <level>',
     'balanced (default) downgrades a directive quoted inside a code fence to fenced_directive/medium; strict reports it as written. There is no "off" level.'
   )
   .action(async (options) => {
     try {
-      const { scanSurfaces, discoverInventory, resolvePolicy } = require('./surfaces');
+      const { scanSurfaces, discoverInventory, resolvePolicy, CATEGORIES } = require('./surfaces');
+
+      // Answered before any input is required: a consumer asking what this
+      // engine can emit should not have to have something to scan.
+      if (options.listCategories) {
+        console.log(JSON.stringify({ schema: 1, categories: CATEGORIES }, null, 2));
+        process.exit(0);
+      }
+
       const { policy, warnings } = resolvePolicy(options.policy);
 
       if (!options.inventory && !options.root) {
