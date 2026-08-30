@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "mcp_servers": [
+    {
+      "source": "profiles/default/config.yaml",
+      "name": "openai-bridge",
+      "transport": "stdio",
+      "command": "node",
+      "args": [
+        "server.js"
+      ],
+      "url": null,
+      "env_keys": [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "DB_PASSWORD",
+        "REGION"
+      ],
+      "env": {
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+        "ANTHROPIC_API_KEY": "$ANTHROPIC_API_KEY",
+        "DB_PASSWORD": "{{DB_PASSWORD}}",
+        "REGION": "us-east-1"
+      }
+    }
+  ],
+  "prompt_files": [],
+  "code_files": []
+}

@@ -9,7 +9,7 @@ repo. Read the boundary below before committing.
 
 | Repo | Visibility | Holds |
 |---|---|---|
-| `agent-security-scanner` | **public**, MIT | the `glance-scanner` CLI, nothing else |
+| `agent-security-scanner` | **public**, MIT | the `glance-scanner` CLI and its platform adapters |
 | `glance-guard` | **private**, UNLICENSED | Glance guard: detectors, judge, hook adapter |
 | `glance-site` | **private** | marketing site, build system, `api/` endpoints |
 
@@ -21,6 +21,30 @@ leak. Do not recombine them.
 
 `src/*.ts` scanner modules, `tests/` scanner suites, `README.md`, `LICENSE`,
 `package.json`, `tsconfig.json`.
+
+### Scope amendment, 30 Aug 2026: `adapters/`
+
+Approved by Eitan on 30 Aug 2026. Until then this table said the CLI and
+nothing else, so this is a deliberate change and not a drift.
+
+`adapters/<platform>/` holds the code that maps one host's layout onto the
+scanner's inventory schema: where that host keeps its MCP configs and its
+skill files, and how it surfaces a finding to its own agent. `adapters/hermes/`
+is the first.
+
+An adapter is in scope here because it holds **no detection logic**. It
+discovers paths, shells out to `glance-scanner surfaces`, and formats the
+result. Every rule, threshold and severity stays in `src/surfaces/`, which is
+already public and MIT.
+
+The boundary is unchanged and is what decides the question. **No adapter may
+contain, import, or vendor guard material** — no detector, no judge, no
+sanitizer, no corpus case, no fixture copied from one. Blocking is the guard's
+job, the guard is not MIT, and it stays in `glance-guard`. An adapter that
+needs to block has crossed the line and belongs in the other repo.
+
+Adapter fixtures are written fresh. Reaching for an existing attack case to
+test an adapter is how the corpus leaks.
 
 ## What must NEVER be committed here
 

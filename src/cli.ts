@@ -40,6 +40,78 @@ program
 
 
 
+// ── surfaces command ───────────────────────────────────────────
+//
+// Agent surfaces are a distinct scan target from code. An MCP server entry and
+// a skill file are read by the agent as configuration and as instruction, and
+// neither `npm audit` nor semgrep reads either one. They are also identical on
+// every host, so this lives in the shipped CLI and every platform adapter gets
+// it for free.
+program
+  .command('surfaces')
+  .description('Scan agent surfaces: MCP server configs and prompt/skill files')
+  .option('--inventory <path>', 'Inventory JSON produced by a platform adapter')
+  .option('--root <dir>', 'Discover surfaces under a directory instead')
+  .option('--json', 'Emit the report as JSON')
+  .option(
+    '--evidence',
+    'Include matched text on each finding. Off by default: the caller is sometimes an LLM prompt.'
+  )
+  .action(async (options) => {
+    try {
+      const { scanSurfaces, discoverInventory } = require('./surfaces');
+
+      if (!options.inventory && !options.root) {
+        console.error('error: pass --inventory <path.json> or --root <dir>');
+        process.exit(2);
+      }
+
+      let inv;
+      if (options.inventory) {
+        inv = JSON.parse(fs.readFileSync(options.inventory, 'utf8'));
+        if (inv && inv.schema !== 1) {
+          console.error(`error: unsupported inventory schema ${inv.schema}, expected 1`);
+          process.exit(2);
+        }
+      } else {
+        inv = discoverInventory(path.resolve(options.root));
+      }
+
+      const report = await scanSurfaces(inv, { evidence: !!options.evidence });
+
+      if (options.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        printSurfaceReport(report, !!options.evidence);
+      }
+      process.exit(report.counts.critical > 0 || report.counts.high > 0 ? 1 : 0);
+    } catch (err: any) {
+      console.error(`error: ${err.message}`);
+      process.exit(2);
+    }
+  });
+
+/** Human-readable surface report. Evidence appears only when asked for. */
+function printSurfaceReport(report: any, withEvidence: boolean): void {
+  const c = report.counts;
+  console.log(`${MARK} agent surfaces`);
+  console.log(`  scanned ${report.total_scanned}  |  critical ${c.critical}  high ${c.high}  medium ${c.medium}  info ${c.info}`);
+  if (!report.findings.length) {
+    console.log('  nothing to report.');
+    return;
+  }
+  console.log();
+  for (const f of report.findings) {
+    const loc = f.line ? `${f.path}:${f.line}` : f.path;
+    console.log(`  ${f.severity.padEnd(8)} ${f.category.padEnd(24)} ${loc}  [${f.id}]`);
+    if (withEvidence && f.evidence) console.log(`           ${f.evidence}`);
+  }
+  if (!withEvidence) {
+    console.log();
+    console.log('  Matched text is withheld. Re-run with --evidence to see it.');
+  }
+}
+
 // ── install-tools command ──────────────────────────────────────────────────
 program
   .command('install-tools')

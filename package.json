@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/cli.ts",
-    "test": "node tests/validate.js && node tests/semgrep-skip.js",
+    "test": "node tests/validate.js && node tests/semgrep-skip.js && node tests/surfaces.js",
     "start": "node dist/cli.js",
     "prepublishOnly": "npm run build && npm test"
   },

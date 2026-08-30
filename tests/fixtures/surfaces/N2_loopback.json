@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "mcp_servers": [
+    {
+      "source": "profiles/dev/config.yaml",
+      "name": "local-a",
+      "transport": "http",
+      "command": null,
+      "args": [],
+      "url": "http://localhost:3001",
+      "env_keys": [],
+      "env": null
+    },
+    {
+      "source": "profiles/dev/config.yaml",
+      "name": "local-b",
+      "transport": "http",
+      "command": null,
+      "args": [],
+      "url": "http://127.0.0.1:8080",
+      "env_keys": [],
+      "env": null
+    },
+    {
+      "source": "profiles/dev/config.yaml",
+      "name": "local-c",
+      "transport": "http",
+      "command": null,
+      "args": [],
+      "url": "http://[::1]:9000",
+      "env_keys": [],
+      "env": null
+    },
+    {
+      "source": "profiles/dev/config.yaml",
+      "name": "local-d",
+      "transport": "http",
+      "command": null,
+      "args": [],
+      "url": "http://build-box.local:7000",
+      "env_keys": [],
+      "env": null
+    }
+  ],
+  "prompt_files": [],
+  "code_files": []
+}
