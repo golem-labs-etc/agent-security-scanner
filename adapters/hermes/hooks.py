@@ -123,6 +123,15 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> Optional[Dict[str, str]
             fid = f.get("id")
             if fid:
                 seen.add(fid)
+        # The one line this adapter logs on the happy path. It records that an
+        # announcement was made and to which session, and carries no path, no
+        # category and no evidence -- a log file is not an agent context, but
+        # it is still somewhere a payload should not end up.
+        log.info(
+            "glance: announcing %d new finding(s) to session %s",
+            len(fresh),
+            session_id or "(none)",
+        )
         return {"context": format_findings(fresh)}
     except Exception:
         log.debug("glance: pre_llm_call failed", exc_info=True)

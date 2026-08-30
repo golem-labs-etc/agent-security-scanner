@@ -18,8 +18,26 @@ try:
 except ImportError:  # pragma: no cover - fastapi ships with the dashboard
     APIRouter = None  # type: ignore
 
-from .. import runner
-from ..categories import CATEGORIES
+# The web server imports this file standalone, via
+# ``importlib.util.spec_from_file_location`` with a synthetic module name and
+# no parent package (see web_server._mount_plugin_api_routes). A relative
+# import therefore raises "attempted relative import with no known parent
+# package" and the routes never mount -- silently, because the loader logs and
+# moves on. Resolve the adapter package by path instead.
+try:  # normal package import, e.g. from the test suite
+    from .. import runner  # type: ignore
+    from ..categories import CATEGORIES  # type: ignore
+except ImportError:  # loaded standalone by the dashboard
+    import sys
+    from pathlib import Path
+
+    _adapter_dir = Path(__file__).resolve().parent.parent
+    _parent = str(_adapter_dir.parent)
+    if _parent not in sys.path:
+        sys.path.insert(0, _parent)
+    _pkg = __import__(_adapter_dir.name, fromlist=["runner", "categories"])
+    runner = _pkg.runner
+    CATEGORIES = _pkg.categories.CATEGORIES
 
 log = logging.getLogger("glance.hermes.dashboard")
 

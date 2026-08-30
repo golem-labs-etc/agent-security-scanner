@@ -27,9 +27,10 @@ hooks.py                     four callbacks, none of which scan
 categories.py                the category list, fetched from the scanner
 dashboard/plugin_api.py      /health /stats (cache reads), /scan (explicit)
 dashboard/manifest.json
-desktop/plugin.js            pane; polls /stats, never /scan
+dashboard/index.js           pane; classic script, polls /stats, never /scan
 skills/glance-security/      what the agent should do with a finding
 tests/test_adapter.py        V1–V12
+tests/test_dashboard.py      V13–V14 (dashboard route + pane actually run)
 ```
 
 ## The rule that shapes everything
@@ -122,6 +123,24 @@ No evidence, no matched text, no file content, ever. A finding is announced
 once per session, not once per turn.
 
 ## Dashboard and pane
+
+Both halves follow contracts the host enforces, and both are easy to get wrong
+in a way that fails silently. The predecessor plugin shipped a `plugin_api.py`
+and a pane on disk and neither ever ran.
+
+- **`dashboard/manifest.json` must declare `api`** (a relative path inside
+  `dashboard/`) or the loader sets `has_api: False` and skips the mount without
+  an error anyone reads.
+- **`entry` is resolved inside `dashboard/`**, and `serve_plugin_asset` serves
+  only from there and blocks traversal. A pane one directory up is unreachable.
+- **The pane is a classic script, not an ES module.** The dashboard loads it
+  with a plain `<script src>`, so a top-level `export` is a SyntaxError and the
+  pane never registers. It calls
+  `window.__HERMES_PLUGINS__.register("glance-surfaces", Component)` and takes
+  React from `window.__HERMES_PLUGIN_SDK__` rather than bundling its own.
+- **`plugin_api.py` is imported standalone**, via `spec_from_file_location`
+  with no parent package, so relative imports raise and the routes never mount.
+  It resolves the adapter package by path instead.
 
 `/health` and `/stats` are cache reads. `/scan` is a POST, starts a background
 scan and returns immediately.
