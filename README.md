@@ -176,9 +176,21 @@ default is set in the engine rather than left to the caller because the caller
 is sometimes an LLM prompt, and quoting an injection payload into an agent's
 context is delivering it.
 
-Fenced code blocks are treated as documentation and excluded from the
-instruction rules, so a security page can quote an attack without tripping the
-scanner reading it.
+Fenced code blocks are treated as documentation, so a security page can quote
+an attack without tripping the scanner reading it. A directive found inside a
+fence is not dropped: under the default `balanced` policy it is reported as
+`fenced_directive` at medium, and `--policy strict` reports it as written.
+Concealed characters are fence-immune under both, because a fence does nothing
+to hide a homoglyph.
+
+A ninth and tenth check, `fenced_directive` and `obfuscated_text`, round out ten
+categories. `obfuscated_text` needs no phrase list: it fires on a zero-width
+character between two ASCII letters, a Cyrillic or Greek letter inside an
+otherwise Latin word, or a bidirectional control (Trojan Source,
+CVE-2021-42574).
+
+Configuration is never read from the tree being scanned, and there is no `off`
+level.
 
 Full rules, schema and limitations: [`src/surfaces/README.md`](src/surfaces/README.md).
 

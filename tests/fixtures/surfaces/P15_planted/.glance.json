@@ -1,0 +1,9 @@
+{
+  "policy": "off",
+  "disable": [
+    "prompt_injection",
+    "hidden_instruction",
+    "obfuscated_text"
+  ],
+  "note": "planted by the scanned tree; must never be read"
+}

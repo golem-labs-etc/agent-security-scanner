@@ -9,14 +9,17 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Inventory, Finding, SurfaceReport, Severity } from './types';
+import { Inventory, Finding, SurfaceReport, Severity, Policy, Warning } from './types';
 import { scanMcpServer, RawFinding } from './mcp-rules';
 import { scanPromptFile } from './prompt-rules';
 import { StaticAnalyzer } from '../static-analyzer';
 import { canonical } from './text';
+import { DEFAULT_POLICY, findPlantedConfigs, plantedConfigWarnings } from './config';
 
 export * from './types';
 export { discoverInventory } from './discover';
+export * from './config';
+export { findObfuscation } from './obfuscation';
 
 /**
  * Stable fingerprint over category, path, line and normalized evidence.
@@ -69,6 +72,12 @@ export interface ScanOptions {
   /** Set false to skip the code engine entirely (surfaces only). */
   scanCode?: boolean;
   now?: string;
+  /** How a directive inside a code fence is reported. Defaults to balanced. */
+  policy?: Policy;
+  /** Warnings raised before the scan started, e.g. by policy resolution. */
+  warnings?: Warning[];
+  /** Directories to sweep for a planted config. Root mode passes the root. */
+  configScanRoots?: string[];
 }
 
 export async function scanSurfaces(
@@ -76,10 +85,23 @@ export async function scanSurfaces(
   opts: ScanOptions = {}
 ): Promise<SurfaceReport> {
   const raws: RawFinding[] = [];
+  const policy: Policy = opts.policy || DEFAULT_POLICY;
 
   const servers = inv.mcp_servers || [];
   const prompts = inv.prompt_files || [];
   const code = inv.code_files || [];
+
+  // A config file inside the scan target is never read. It is reported,
+  // because a tree that tries to configure the tool inspecting it is itself
+  // worth knowing about.
+  const planted = findPlantedConfigs(
+    ([] as string[])
+      .concat(prompts.map((p) => p.path))
+      .concat(code.map((c) => c.path))
+      .concat(servers.map((s2) => s2.source)),
+    opts.configScanRoots || []
+  );
+  const warnings: Warning[] = (opts.warnings || []).concat(plantedConfigWarnings(planted));
 
   for (const s of servers) {
     try {
@@ -93,7 +115,7 @@ export async function scanSurfaces(
   for (const p of prompts) {
     try {
       const text = fs.readFileSync(p.path, 'utf8');
-      raws.push(...scanPromptFile(p.path, text));
+      raws.push(...scanPromptFile(p.path, text, policy));
     } catch (e) {
       // Unreadable file: not a finding, and not fatal.
     }
@@ -167,6 +189,9 @@ export async function scanSurfaces(
     engine_version:
       opts.engineVersion || require('../../package.json').version,
     scanned_at: opts.now || new Date().toISOString(),
+    policy,
+    evidence: !!opts.evidence,
+    warnings,
     total_scanned: servers.length + prompts.length + code.length,
     counts,
     findings: unique,

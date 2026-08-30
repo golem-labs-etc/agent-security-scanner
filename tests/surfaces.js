@@ -19,7 +19,7 @@
 const path = require('path');
 const fs = require('fs');
 
-const { scanSurfaces } = require('../dist/surfaces');
+const { scanSurfaces, resolvePolicy, CATEGORIES } = require('../dist/surfaces');
 
 const FIX = path.join(__dirname, 'fixtures', 'surfaces');
 const f = (n) => path.join(FIX, n);
@@ -58,6 +58,26 @@ const POSITIVE = [
     want: { category: 'secret_in_config', severity: 'critical' } },
   { id: 'P7', fixture: 'P7_exfil.md', kind: 'prompt',
     want: { category: 'exfiltration_instruction', severity: 'critical' } },
+
+  // Amendment: fence policy, and obfuscation as its own signal.
+  { id: 'P8a', fixture: 'P8_unfenced_directive.md', kind: 'prompt', policy: 'balanced',
+    want: { category: 'prompt_injection', severity: 'high' } },
+  { id: 'P8b', fixture: 'P8_unfenced_directive.md', kind: 'prompt', policy: 'strict',
+    want: { category: 'prompt_injection', severity: 'high' } },
+  { id: 'P9', fixture: 'P9_fenced_directive.md', kind: 'prompt', policy: 'balanced',
+    want: { category: 'fenced_directive', severity: 'medium' } },
+  { id: 'P10', fixture: 'P9_fenced_directive.md', kind: 'prompt', policy: 'strict',
+    want: { category: 'prompt_injection', severity: 'high' } },
+  { id: 'P11a', fixture: 'P11_homoglyph_fenced.md', kind: 'prompt', policy: 'balanced',
+    want: { category: 'hidden_instruction', severity: 'critical' } },
+  { id: 'P11b', fixture: 'P11_homoglyph_fenced.md', kind: 'prompt', policy: 'strict',
+    want: { category: 'hidden_instruction', severity: 'critical' } },
+  { id: 'P12', fixture: 'P12_zerowidth_word.md', kind: 'prompt',
+    want: { category: 'obfuscated_text', severity: 'high' } },
+  { id: 'P13', fixture: 'P13_mixed_script_word.md', kind: 'prompt',
+    want: { category: 'obfuscated_text', severity: 'high' } },
+  { id: 'P14', fixture: 'P14_bidi_override.md', kind: 'prompt',
+    want: { category: 'obfuscated_text', severity: 'high' } },
 ];
 
 const NEGATIVE = [
@@ -76,11 +96,41 @@ const NEGATIVE = [
   { id: 'N5', fixture: 'N5_env_reference.json', kind: 'inventory',
     rule: 'no secret_in_config',
     check: (r) => !r.findings.some((x) => x.category === 'secret_in_config') },
+
+  { id: 'N6', fixture: 'N6_security_doc_fenced.md', kind: 'prompt', policy: 'balanced',
+    rule: 'no high, no critical',
+    check: (r) => r.counts.critical === 0 && r.counts.high === 0 },
+  { id: 'N7', fixture: 'N7_soft_hyphen.md', kind: 'prompt',
+    rule: 'no obfuscated_text',
+    check: (r) => !r.findings.some((x) => x.category === 'obfuscated_text') },
+  { id: 'N8', fixture: 'N8_bom.md', kind: 'prompt',
+    rule: 'no obfuscated_text',
+    check: (r) => !r.findings.some((x) => x.category === 'obfuscated_text') },
+  { id: 'N9', fixture: 'N9_zwnj_scripts.md', kind: 'prompt',
+    rule: 'no obfuscated_text',
+    check: (r) => !r.findings.some((x) => x.category === 'obfuscated_text') },
+  { id: 'N10', fixture: 'N10_emoji_zwj.md', kind: 'prompt',
+    rule: 'no obfuscated_text',
+    check: (r) => !r.findings.some((x) => x.category === 'obfuscated_text') },
+  { id: 'N11', fixture: 'N11_russian_sentence.md', kind: 'prompt',
+    rule: 'no obfuscated_text',
+    check: (r) => !r.findings.some((x) => x.category === 'obfuscated_text') },
+  { id: 'N12', fixture: 'N1_typical.json', kind: 'inventory', policy: 'strict',
+    rule: 'clean machine under strict, still zero high',
+    check: (r) => r.counts.high === 0 && r.counts.critical === 0 },
 ];
 
 async function scanCase(c) {
   const inv = c.kind === 'prompt' ? promptInv([c.fixture]) : jsonInv(c.fixture);
-  return scanSurfaces(inv, OPTS);
+  const opts = Object.assign({}, OPTS);
+  if (c.policy) opts.policy = c.policy;
+  if (c.roots) opts.configScanRoots = c.roots;
+  return scanSurfaces(inv, opts);
+}
+
+/** Label a case with the policy it ran under, so the output is unambiguous. */
+function policyOf(c) {
+  return c.policy || 'balanced';
 }
 
 /**
@@ -135,8 +185,8 @@ function declaredPaths(c) {
     if (hit) {
       pass++;
       const loc = hit.line ? ':' + hit.line : '';
-      console.log('  ok    ' + c.id + '  ' + c.want.category + ' ' +
-                  c.want.severity + '  [' + hit.id + ']' + loc);
+      console.log('  ok    ' + c.id.padEnd(5) + policyOf(c).padEnd(9) +
+                  c.want.category + ' ' + c.want.severity + '  [' + hit.id + ']' + loc);
     } else {
       fail++;
       failures.push(c.id);
@@ -152,7 +202,7 @@ function declaredPaths(c) {
     const r = await scanCase(c);
     if (c.check(r)) {
       pass++;
-      console.log('  ok    ' + c.id + '  ' + c.rule +
+      console.log('  ok    ' + c.id.padEnd(5) + policyOf(c).padEnd(9) + c.rule +
                   '  (c' + r.counts.critical + ' h' + r.counts.high +
                   ' m' + r.counts.medium + ' i' + r.counts.info + ')');
     } else {
@@ -188,6 +238,70 @@ function declaredPaths(c) {
     }
   }
 
+  console.log('');
+  console.log('POLICY    stamping, planted config, and the absent off level');
+
+  // P15: a config planted inside the scan target must be ignored and named.
+  const plantedDir = path.join(FIX, 'P15_planted');
+  const p15 = await scanSurfaces(
+    { schema: 1, mcp_servers: [], prompt_files: [{ path: path.join(plantedDir, 'SKILL.md') }], code_files: [] },
+    Object.assign({}, OPTS, { configScanRoots: [plantedDir] })
+  );
+  const warned = (p15.warnings || []).find(
+    (w) => w.code === 'planted_config' && w.path && w.path.indexOf('.glance.json') !== -1
+  );
+  // The planted file asks for policy "off". The run must still be balanced,
+  // and the skill in that directory must still be reported.
+  const stillDetecting = p15.findings.some((x) => x.category === 'prompt_injection');
+  if (warned && p15.policy === 'balanced' && stillDetecting) {
+    pass++;
+    console.log('  ok    P15  planted config ignored, warning names ' +
+                path.basename(warned.path) + ', policy still ' + p15.policy +
+                ', detection unaffected');
+  } else {
+    fail++;
+    failures.push('P15');
+    console.log('  FAIL  P15  warned=' + !!warned + ' policy=' + p15.policy +
+                ' stillDetecting=' + stillDetecting);
+  }
+
+  // Every result must carry policy and evidence, whatever the case.
+  let stampOk = true;
+  for (const c of POSITIVE.concat(NEGATIVE)) {
+    const r = await scanCase(c);
+    if (r.policy !== policyOf(c) || typeof r.evidence !== 'boolean' ||
+        !Array.isArray(r.warnings)) {
+      stampOk = false;
+      console.log('  FAIL  stamp missing or wrong on ' + c.id +
+                  ' (policy=' + r.policy + ', evidence=' + r.evidence + ')');
+    }
+  }
+  if (stampOk) {
+    pass++;
+    console.log('  ok    every result carries policy, evidence and warnings');
+  } else {
+    fail++;
+    failures.push('policy-stamp');
+  }
+
+  // There is no off level, and asking for one is an error rather than a
+  // silent fallback to something permissive.
+  let refusedOff = false;
+  try {
+    resolvePolicy('off');
+  } catch (e) {
+    refusedOff = /no "off" level/.test(e.message);
+  }
+  const defaultsBalanced = resolvePolicy(undefined, { HOME: '/nonexistent-glance-home' }).policy === 'balanced';
+  if (refusedOff && defaultsBalanced) {
+    pass++;
+    console.log('  ok    --policy off is refused; default resolves to balanced');
+  } else {
+    fail++;
+    failures.push('no-off-level');
+    console.log('  FAIL  refusedOff=' + refusedOff + ' defaultsBalanced=' + defaultsBalanced);
+  }
+
   // The opposite must also hold: --evidence has to actually produce evidence,
   // or the default proves nothing.
   const ev = await scanSurfaces(promptInv(['P1_override.md']),
@@ -213,6 +327,27 @@ function declaredPaths(c) {
     fail++;
     failures.push('fingerprint-stability');
     console.log('  FAIL  fingerprints differ between identical runs');
+  }
+
+  // Part B's dashboard colour map must be exhaustive over the categories this
+  // engine emits. Assert the exported list covers everything actually produced,
+  // so adding a rule without adding a colour fails here rather than there.
+  const emitted = {};
+  for (const c of POSITIVE.concat(NEGATIVE)) {
+    const r = await scanCase(c);
+    for (const x of r.findings) emitted[x.category] = true;
+  }
+  const uncovered = Object.keys(emitted).filter((k) => CATEGORIES.indexOf(k) === -1);
+  if (CATEGORIES.length === 10 && uncovered.length === 0) {
+    pass++;
+    console.log('  ok    CATEGORIES exhaustive: ' + CATEGORIES.length +
+                ' declared, ' + Object.keys(emitted).length +
+                ' exercised, 0 uncovered');
+  } else {
+    fail++;
+    failures.push('categories-exhaustive');
+    console.log('  FAIL  CATEGORIES: ' + CATEGORIES.length + ' declared, uncovered: ' +
+                (uncovered.join(', ') || 'none'));
   }
 
   console.log('');

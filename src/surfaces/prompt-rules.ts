@@ -18,11 +18,13 @@
  * meaning" fires on exactly the attack and nothing else.
  */
 
-import { Finding } from './types';
+import { Finding, Category, Severity, Policy } from './types';
 import { RawFinding } from './mcp-rules';
 import {
-  eachMatch, maskCode, lineAt, stripInvisible, foldConfusables,
+  eachMatch, lineAt, stripInvisible, foldConfusables,
+  codeRanges, maskRanges, inRanges, Range,
 } from './text';
+import { findObfuscation } from './obfuscation';
 import { findSecretsInText } from './secrets';
 
 // ── directive vocabulary ───────────────────────────────────────────────────
@@ -133,38 +135,76 @@ function styleHides(style: string): boolean {
 
 // ── the ruleset ────────────────────────────────────────────────────────────
 
-export function scanPromptFile(filePath: string, raw: string): RawFinding[] {
-  const out: RawFinding[] = [];
-  const prose = maskCode(raw);
+/**
+ * How a directive found inside a code fence is reported.
+ *
+ * `balanced` downgrades it to `fenced_directive` at medium. Not info: info is
+ * where `unpinned_remote_exec` lives, and that is genuinely benign. A directive
+ * in a fence is not benign, it is unproven, and the severity should say so.
+ *
+ * `strict` reports it as what it is. Part B passes strict, because an agent
+ * consuming raw markdown never sees the fence.
+ */
+function fenceVerdict(
+  policy: Policy,
+  original: Category,
+  originalSeverity: Severity
+): { category: Category; severity: Severity } {
+  if (policy === 'strict') {
+    return { category: original, severity: originalSeverity };
+  }
+  return { category: 'fenced_directive', severity: 'medium' };
+}
 
-  // ── prompt_injection (prose only) ────────────────────────────────────────
+export function scanPromptFile(
+  filePath: string,
+  raw: string,
+  policy: Policy = 'balanced'
+): RawFinding[] {
+  const out: RawFinding[] = [];
+
+  // One range set, two exact complements. A directive cannot fall through the
+  // gap between "prose" and "the fenced part" because there is no gap.
+  const ranges: Range[] = codeRanges(raw);
+  const prose = maskRanges(raw, ranges, false);
+  const fenced = maskRanges(raw, ranges, true);
+
+  const push = (
+    category: Category,
+    severity: Severity,
+    line: number,
+    evidence: string
+  ) => {
+    out.push({ category, severity, surface: 'prompt', path: filePath, line, evidence });
+  };
+
+  // ── prompt_injection ─────────────────────────────────────────────────────
   for (const re of DIRECTIVE_RE) {
     const rx = new RegExp(re.source, re.flags.indexOf('g') === -1 ? re.flags + 'g' : re.flags);
     eachMatch(rx, prose, (m) => {
-      out.push({
-        category: 'prompt_injection',
-        severity: 'high',
-        surface: 'prompt',
-        path: filePath,
-        line: lineAt(raw, m.index),
-        evidence: m[0].trim(),
-      });
+      push('prompt_injection', 'high', lineAt(raw, m.index), m[0].trim());
+    });
+  }
+
+  // The same patterns over fenced regions only, reported under the policy.
+  for (const re of DIRECTIVE_RE) {
+    const rx = new RegExp(re.source, re.flags.indexOf('g') === -1 ? re.flags + 'g' : re.flags);
+    eachMatch(rx, fenced, (m) => {
+      const v = fenceVerdict(policy, 'prompt_injection', 'high');
+      push(v.category, v.severity, lineAt(raw, m.index),
+           'in fenced block: ' + m[0].trim());
     });
   }
 
   // ── hidden_instruction: the reveal test ──────────────────────────────────
-  // Run over the whole file, fences included. A fence makes content *visible*,
-  // which is why the instruction rules skip it -- but it does nothing to make
-  // a homoglyph or a zero-width split visible, so this rule does not skip it.
+  // Runs over the whole file, fences included, and is fence-immune under every
+  // policy. A fence renders content visible, which is why it defeats the rules
+  // that turn on visibility. It does nothing at all to a homoglyph.
   const canon = canonicalWithMap(raw);
   const seenHidden: Record<string, true> = {};
   for (const re of DIRECTIVE_RE) {
     const rx = new RegExp(re.source, re.flags.indexOf('g') === -1 ? re.flags + 'g' : re.flags);
     eachMatch(rx, canon.text, (m) => {
-      // Map the canonical span back onto the bytes it came from, and ask
-      // whether those bytes said the same thing. If they did, this is a plain
-      // directive and `prompt_injection` owns it. If they did not, the meaning
-      // only appeared once the hiding was undone -- which is the attack.
       const from = canon.map[m.index];
       const toIdx = m.index + m[0].length - 1;
       const to = canon.map[Math.min(toIdx, canon.map.length - 1)];
@@ -177,90 +217,90 @@ export function scanPromptFile(filePath: string, raw: string): RawFinding[] {
       const key = String(line) + ':' + m[0];
       if (seenHidden[key]) return;
       seenHidden[key] = true;
-      out.push({
-        category: 'hidden_instruction',
-        severity: 'critical',
-        surface: 'prompt',
-        path: filePath,
-        line,
-        evidence: 'obfuscated directive: ' + m[0].trim(),
-      });
+      push('hidden_instruction', 'critical', line,
+           'obfuscated directive: ' + m[0].trim());
     });
   }
 
   // ── hidden_instruction: HTML comments carrying agent-directed imperatives ─
-  // Reads `prose`, not `raw`: a comment inside a fenced block is rendered
-  // verbatim to a human, so it is documentation, not something hidden. That is
-  // the same line the instruction rules draw, and it is what lets a security
-  // skill quote a hidden-comment payload as an example without firing.
-  eachMatch(/<!--([\s\S]*?)-->/g, prose, (m) => {
+  //
+  // This shape and the CSS one below conceal by *rendering*, and a code fence
+  // defeats that concealment: a comment quoted in a fence is displayed to the
+  // reader like any other line. So these two follow the fence policy, while the
+  // reveal test above does not. That split is deliberate. Without it a security
+  // page cannot show what a hidden-comment payload looks like, which is the
+  // single most likely thing such a page contains, and N3/N6 fail.
+  eachMatch(/<!--([\s\S]*?)-->/g, raw, (m) => {
     const body = m[1];
     const directive = firstMatch(DIRECTIVE_RE, body);
     const exfil = EXFIL_VERB.test(body) && NETWORK_DEST.test(body);
     const addressed = AGENT_REF.test(body) && IMPERATIVE_VERB.test(body);
-    if (directive || exfil || addressed) {
-      out.push({
-        category: 'hidden_instruction',
-        severity: 'critical',
-        surface: 'prompt',
-        path: filePath,
-        line: lineAt(raw, m.index),
-        evidence: 'html comment: ' + body.trim().slice(0, 120),
-      });
+    if (!(directive || exfil || addressed)) return;
+
+    const evidence = 'html comment: ' + body.trim().slice(0, 120);
+    if (inRanges(ranges, m.index)) {
+      const v = fenceVerdict(policy, 'hidden_instruction', 'critical');
+      push(v.category, v.severity, lineAt(raw, m.index), 'in fenced block: ' + evidence);
+    } else {
+      push('hidden_instruction', 'critical', lineAt(raw, m.index), evidence);
     }
   });
 
   // ── hidden_instruction: HTML styled to be unreadable ─────────────────────
-  eachMatch(/<([a-z][a-z0-9]*)\b[^>]*\bstyle\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/gi, prose, (m) => {
+  eachMatch(/<([a-z][a-z0-9]*)\b[^>]*\bstyle\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/gi, raw, (m) => {
     const style = m[3] !== undefined ? m[3] : (m[4] || '');
-    if (styleHides(style)) {
-      out.push({
-        category: 'hidden_instruction',
-        severity: 'critical',
-        surface: 'prompt',
-        path: filePath,
-        line: lineAt(raw, m.index),
-        evidence: 'hidden html <' + m[1] + ' style="' + style.trim().slice(0, 80) + '">',
-      });
+    if (!styleHides(style)) return;
+
+    const evidence = 'hidden html <' + m[1] + ' style="' + style.trim().slice(0, 80) + '">';
+    if (inRanges(ranges, m.index)) {
+      const v = fenceVerdict(policy, 'hidden_instruction', 'critical');
+      push(v.category, v.severity, lineAt(raw, m.index), 'in fenced block: ' + evidence);
+    } else {
+      push('hidden_instruction', 'critical', lineAt(raw, m.index), evidence);
     }
   });
 
-  // ── exfiltration_instruction (prose only) ────────────────────────────────
+  // ── obfuscated_text ──────────────────────────────────────────────────────
+  // Independent of the phrase list, and fence-immune under every policy.
+  for (const hit of findObfuscation(raw)) {
+    push('obfuscated_text', 'high', hit.line, hit.evidence);
+  }
+
+  // ── exfiltration_instruction ─────────────────────────────────────────────
   // Verb, local data and destination must co-occur inside one sentence. Any
   // two of the three are ordinary technical writing.
+  //
   // A wrapped markdown paragraph is one sentence, not four. Single newlines
   // become spaces first -- one character for one character, so every offset
-  // still points where it did. Blank lines survive and still end a sentence.
-  const flowed = prose.replace(/([^\n])\n(?![ \t]*\n)/g, '$1 ');
-  // A full stop only ends a sentence when whitespace follows it. Without that
-  // guard the split lands inside `~/.env` and inside every hostname, which is
-  // exactly where the verb, the file and the destination get separated.
-  eachMatch(/(?:[^\n.!?]|[.!?](?!\s|$))+[.!?]?/g, flowed, (m) => {
+  // still points where it did. A full stop only ends a sentence when
+  // whitespace follows it, or the split lands inside `~/.env` and inside every
+  // hostname, which is exactly where verb and destination get separated.
+  const flow = (t: string) => t.replace(/([^\n])\n(?![ \t]*\n)/g, '$1 ');
+  const SENTENCE = /(?:[^\n.!?]|[.!?](?!\s|$))+[.!?]?/g;
+
+  eachMatch(SENTENCE, flow(prose), (m) => {
     const sent = m[0];
     if (sent.trim().length < 12) return;
     if (EXFIL_VERB.test(sent) && LOCAL_DATA.test(sent) && NETWORK_DEST.test(sent)) {
-      out.push({
-        category: 'exfiltration_instruction',
-        severity: 'critical',
-        surface: 'prompt',
-        path: filePath,
-        line: lineAt(raw, m.index),
-        evidence: sent.trim().slice(0, 160),
-      });
+      push('exfiltration_instruction', 'critical', lineAt(raw, m.index),
+           sent.trim().slice(0, 160));
+    }
+  });
+
+  eachMatch(SENTENCE, flow(fenced), (m) => {
+    const sent = m[0];
+    if (sent.trim().length < 12) return;
+    if (EXFIL_VERB.test(sent) && LOCAL_DATA.test(sent) && NETWORK_DEST.test(sent)) {
+      const v = fenceVerdict(policy, 'exfiltration_instruction', 'critical');
+      push(v.category, v.severity, lineAt(raw, m.index),
+           'in fenced block: ' + sent.trim().slice(0, 160));
     }
   });
 
   // ── credential_leak (whole file) ─────────────────────────────────────────
   // A live key inside a fence is still a live key.
   for (const hit of findSecretsInText(raw)) {
-    out.push({
-      category: 'credential_leak',
-      severity: 'critical',
-      surface: 'prompt',
-      path: filePath,
-      line: lineAt(raw, hit.index),
-      evidence: hit.shape + ' credential',
-    });
+    push('credential_leak', 'critical', lineAt(raw, hit.index), hit.shape + ' credential');
   }
 
   return out;

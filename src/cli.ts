@@ -57,9 +57,14 @@ program
     '--evidence',
     'Include matched text on each finding. Off by default: the caller is sometimes an LLM prompt.'
   )
+  .option(
+    '--policy <level>',
+    'balanced (default) downgrades a directive quoted inside a code fence to fenced_directive/medium; strict reports it as written. There is no "off" level.'
+  )
   .action(async (options) => {
     try {
-      const { scanSurfaces, discoverInventory } = require('./surfaces');
+      const { scanSurfaces, discoverInventory, resolvePolicy } = require('./surfaces');
+      const { policy, warnings } = resolvePolicy(options.policy);
 
       if (!options.inventory && !options.root) {
         console.error('error: pass --inventory <path.json> or --root <dir>');
@@ -73,11 +78,21 @@ program
           console.error(`error: unsupported inventory schema ${inv.schema}, expected 1`);
           process.exit(2);
         }
-      } else {
-        inv = discoverInventory(path.resolve(options.root));
       }
 
-      const report = await scanSurfaces(inv, { evidence: !!options.evidence });
+      let configScanRoots: string[] = [];
+      if (options.root) {
+        const root = path.resolve(options.root);
+        inv = discoverInventory(root);
+        configScanRoots = [root];
+      }
+
+      const report = await scanSurfaces(inv, {
+        evidence: !!options.evidence,
+        policy,
+        warnings,
+        configScanRoots,
+      });
 
       if (options.json) {
         console.log(JSON.stringify(report, null, 2));
@@ -95,7 +110,10 @@ program
 function printSurfaceReport(report: any, withEvidence: boolean): void {
   const c = report.counts;
   console.log(`${MARK} agent surfaces`);
-  console.log(`  scanned ${report.total_scanned}  |  critical ${c.critical}  high ${c.high}  medium ${c.medium}  info ${c.info}`);
+  console.log(`  policy ${report.policy}  |  scanned ${report.total_scanned}  |  critical ${c.critical}  high ${c.high}  medium ${c.medium}  info ${c.info}`);
+  for (const w of report.warnings || []) {
+    console.log(`  warning: ${w.message}`);
+  }
   if (!report.findings.length) {
     console.log('  nothing to report.');
     return;

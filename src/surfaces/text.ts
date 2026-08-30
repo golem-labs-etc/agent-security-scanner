@@ -119,28 +119,87 @@ function blank(s: string): string {
   return s.replace(/[^\n]/g, ' ');
 }
 
+export type Range = [number, number];
+
+/**
+ * Character ranges that are code: fenced blocks, inline spans, indented blocks.
+ *
+ * One source of truth, so "prose" and "the fenced part" are exact complements
+ * and a directive cannot fall through the gap between them. Ranges are
+ * collected in the same order the masking used to apply them, so the region
+ * split is identical to the behaviour this replaced.
+ */
+export function codeRanges(src: string): Range[] {
+  const ranges: Range[] = [];
+  let work = src;
+
+  // Fenced blocks: ``` or ~~~ , optional info string, to the closing fence or
+  // to end of file if the author never closed it.
+  work = work.replace(
+    /^([ \t]*)(`{3,}|~{3,})[^\n]*\n([\s\S]*?)(^[ \t]*\2[^\n]*$|$)/gm,
+    (m: string, ...rest: any[]) => {
+      const off = rest[rest.length - 2] as number;
+      ranges.push([off, off + m.length]);
+      return blank(m);
+    }
+  );
+
+  // Inline code spans, single or multiple backticks.
+  work = work.replace(/(`+)(?:(?!\1)[\s\S])*?\1/g, (m: string, ...rest: any[]) => {
+    const off = rest[rest.length - 2] as number;
+    ranges.push([off, off + m.length]);
+    return blank(m);
+  });
+
+  // Indented code blocks, only where the previous line is blank.
+  work.replace(
+    /(^|\n)[ \t]*\n((?:(?: {4}|\t)[^\n]*\n?)+)/g,
+    (m: string, _pre: string, body: string, ...rest: any[]) => {
+      const off = rest[rest.length - 2] as number;
+      const bodyStart = off + m.length - body.length;
+      ranges.push([bodyStart, bodyStart + body.length]);
+      return m;
+    }
+  );
+
+  return ranges.sort((a, b) => a[0] - b[0]);
+}
+
+/** True when an offset falls inside any range. */
+export function inRanges(ranges: Range[], idx: number): boolean {
+  for (const r of ranges) if (idx >= r[0] && idx < r[1]) return true;
+  return false;
+}
+
+/**
+ * Blank the given ranges, or everything outside them when `invert` is set.
+ *
+ * Offsets and newlines are preserved either way, so a finding reported from
+ * one view still names the line it occupies in the original file.
+ */
+export function maskRanges(src: string, ranges: Range[], invert = false): string {
+  const keep: boolean[] = new Array(src.length);
+  for (let i = 0; i < src.length; i++) keep[i] = invert;
+  for (const r of ranges) {
+    for (let i = r[0]; i < r[1] && i < src.length; i++) keep[i] = !invert;
+  }
+  let out = '';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    out += keep[i] ? (c === '\n' ? c : ' ') : c;
+  }
+  return out;
+}
+
 /**
  * Blank out fenced blocks, indented code blocks and inline code spans.
  *
  * Fenced content is visible verbatim to a human reader in every markdown
- * renderer, so by definition it is not "hidden", and quoting an attack in a
- * fence is what documentation is for. Offsets and line numbers are preserved
- * exactly, so a finding outside a fence still reports its true line.
+ * renderer, so quoting an attack in a fence is documentation. Offsets and line
+ * numbers are preserved exactly.
  */
 export function maskCode(src: string): string {
-  let out = src;
-  // Fenced blocks: ``` or ~~~ , optional info string, to the closing fence
-  // or to end of file if the author never closed it.
-  out = out.replace(/^([ \t]*)(`{3,}|~{3,})[^\n]*\n([\s\S]*?)(^[ \t]*\2[^\n]*$|$)/gm,
-    (m) => blank(m));
-  // Inline code spans, single or multiple backticks, not spanning a blank line.
-  out = out.replace(/(`+)(?:(?!\1)[\s\S])*?\1/g, (m) => blank(m));
-  // Indented code blocks: four leading spaces or a tab, on a line that is not
-  // inside a list continuation we can cheaply tell apart. Conservative: only
-  // when the previous line is blank.
-  out = out.replace(/(^|\n)[ \t]*\n((?:(?: {4}|\t)[^\n]*\n?)+)/g,
-    (m, pre, body) => pre + '\n' + blank(body));
-  return out;
+  return maskRanges(src, codeRanges(src), false);
 }
 
 /** 1-based line number of a character offset. */

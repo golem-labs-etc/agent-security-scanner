@@ -15,6 +15,18 @@ export type Severity = 'critical' | 'high' | 'medium' | 'info';
 
 export type SurfaceKind = 'mcp' | 'prompt' | 'code';
 
+/**
+ * How a directive found inside a code fence is reported.
+ *
+ * There is deliberately no `off`. A level that silences a category is the first
+ * thing a person reaches for when a tool is noisy, and from then on they are
+ * blind to every future instance of it. Suppression already exists at the right
+ * granularity: the baseline, per finding id, one finding at a time.
+ */
+export type Policy = 'balanced' | 'strict';
+
+export const POLICIES: Policy[] = ['balanced', 'strict'];
+
 export type Category =
   // MCP server entries
   | 'unencrypted_transport'
@@ -25,7 +37,25 @@ export type Category =
   | 'prompt_injection'
   | 'hidden_instruction'
   | 'exfiltration_instruction'
-  | 'credential_leak';
+  | 'credential_leak'
+  // a directive quoted inside a code fence: unproven, not benign
+  | 'fenced_directive'
+  // text is concealed, independent of what it says
+  | 'obfuscated_text';
+
+/** Every category this engine can emit. A consumer's colour map must cover all ten. */
+export const CATEGORIES: Category[] = [
+  'unencrypted_transport',
+  'secret_in_config',
+  'command_injection_risk',
+  'unpinned_remote_exec',
+  'prompt_injection',
+  'hidden_instruction',
+  'exfiltration_instruction',
+  'credential_leak',
+  'fenced_directive',
+  'obfuscated_text',
+];
 
 export interface McpServerEntry {
   /** Config file this entry was read from. Used as the finding path. */
@@ -82,10 +112,25 @@ export interface Finding {
   evidence?: string;
 }
 
+/** Something the caller needs to know that is not a finding about the target. */
+export interface Warning {
+  code: 'planted_config' | 'invalid_policy';
+  path?: string;
+  message: string;
+}
+
 export interface SurfaceReport {
   schema: 1;
   engine_version: string;
   scanned_at: string;
+  /**
+   * Stamped on every result. A report that cannot be interpreted without
+   * knowing which policy produced it is not auditable, and a forgotten or
+   * tampered setting should be visible rather than silent.
+   */
+  policy: Policy;
+  evidence: boolean;
+  warnings: Warning[];
   total_scanned: number;
   counts: Record<Severity, number>;
   findings: Finding[];
