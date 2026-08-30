@@ -38,6 +38,32 @@ program
   .description('Security scanner for AI agents. Static analysis by default (semgrep + npm audit), no API key needed.')
   .version(require('../package.json').version);
 
+/**
+ * Exit with a status without discarding output already written.
+ *
+ * `process.exit()` terminates immediately and drops anything still queued on
+ * stdout. Writes to a terminal are synchronous, so this is invisible by hand;
+ * writes to a pipe are not, so any output past the pipe buffer is lost at
+ * exactly 65536 bytes. That shipped in 1.3.0 and truncated the `surfaces`
+ * report mid-JSON for every consumer that read it as a program.
+ *
+ * The rule this establishes: no `process.exit()` anywhere in this file. Either
+ * set `process.exitCode` and return, which is best, or call this. The unref'd
+ * timer is the backstop for a reader that goes away without an error, so a
+ * flush that never completes cannot hang a CI job.
+ */
+function exitAfterFlush(code: number): never {
+  process.exitCode = code;
+  const out = process.stdout as any;
+  if (out.writableLength) {
+    out.write('', () => process.exit(code));
+    setTimeout(() => process.exit(code), 2000).unref();
+  } else {
+    process.exit(code);
+  }
+  return undefined as never;
+}
+
 
 
 // ── surfaces command ───────────────────────────────────────────
@@ -81,7 +107,7 @@ program
 
       if (!options.inventory && !options.root) {
         console.error('error: pass --inventory <path.json> or --root <dir>');
-        process.exit(2);
+        exitAfterFlush(2);
       }
 
       let inv;
@@ -89,7 +115,7 @@ program
         inv = JSON.parse(fs.readFileSync(options.inventory, 'utf8'));
         if (inv && inv.schema !== 1) {
           console.error(`error: unsupported inventory schema ${inv.schema}, expected 1`);
-          process.exit(2);
+          exitAfterFlush(2);
         }
       }
 
@@ -126,7 +152,7 @@ program
       return;
     } catch (err: any) {
       console.error(`error: ${err.message}`);
-      process.exit(2);
+      exitAfterFlush(2);
     }
   });
 
@@ -197,7 +223,7 @@ program
       }
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : error);
-      process.exit(1);
+      exitAfterFlush(1);
     }
   });
 
@@ -233,7 +259,7 @@ program
         const resolved = resolveApiKey(provider);
         if (!resolved.key) {
           printMissingAIKeyHelp(provider);
-          process.exit(1);
+          exitAfterFlush(1);
         }
       }
 
@@ -291,7 +317,7 @@ program
         scanDir = options.path;
       } else {
         console.error('Please provide --file, --path, or --repo');
-        process.exit(1);
+        exitAfterFlush(1);
       }
 
       say(`Scanning ${files.length} file(s)...\n`);
@@ -403,6 +429,13 @@ program
       const unifiedFindings = deduplicator.deduplicate(allSemanticFindings, allToolFindings);
       const report = deduplicator.generateReport(unifiedFindings);
 
+      // Close the cache BEFORE writing the report, not after. It is the only
+      // thing on this path that can throw once the findings are in hand, and a
+      // throw after the write reaches the catch below, which exits. An exit
+      // after a large write to a pipe is how output gets truncated. Nothing
+      // that can fail may run between the report and the end of the process.
+      await cache.close();
+
       if (options.json) {
         // `engines` rides along so a machine consumer can tell a clean scan
         // from a scan that did not happen. Without it, `findings: []` is
@@ -412,15 +445,15 @@ program
         printUnifiedReport(report, options.verbose ? files : []);
       }
 
-      // Cleanup cloned repos
+      // Cleanup cloned repos. Already total: rmSync is wrapped, so nothing
+      // here can reach the catch below. `cache.close()` ran before the report
+      // was written, deliberately -- see above.
       for (const dir of cleanupDirs) {
         try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
       }
-
-      await cache.close();
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : error);
-      process.exit(1);
+      exitAfterFlush(1);
     }
   });
 

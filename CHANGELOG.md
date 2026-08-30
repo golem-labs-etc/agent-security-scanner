@@ -7,6 +7,65 @@ git log.
 
 ## Unreleased
 
+## 1.3.1
+
+**The scanner threw away part of its own report.** Not crashed, not errored,
+not warned. Exit code intact, stderr empty, JSON cut in half.
+
+`glance-scanner surfaces` called `process.exit()` immediately after writing its
+report. `process.exit()` does not flush a pending asynchronous write. stdout to
+a terminal is synchronous, so this was invisible by hand; stdout to a pipe is
+not, so any report over 64 KB reached its caller truncated at exactly 65536
+bytes, mid-JSON. Every consumer that reads this tool as a program reads it
+through a pipe. No person ever does.
+
+It was found by someone using the tool for real, not by any test here. The
+scanner's suite was 54 for 54 and the Hermes adapter's was 12 for 12 on the
+commit that carried the bug. Every one of those tests called the library
+directly, and the library was returning the right object throughout. The defect
+was in the last inch, between a correct object and the reader's stdin, and
+nothing in this repository was looking there. CI was not running the suite at
+all: it type-checked and stopped.
+
+**Which invocations were affected.** Any run of `surfaces` whose report exceeds
+64 KB and whose stdout is not a terminal. That is roughly 300 findings. Piping
+to `jq`, redirecting to a file, or reading it from another program all
+qualify; running it in a terminal does not.
+
+**How far it reached.** `surfaces` was merged to `main` on 30 August and has
+never been published to npm. The last published release, 1.3.0 (28 August),
+contains only `analyze` and `install-tools`. `analyze` writes its report and
+returns rather than calling `process.exit()`, and is not affected: verified
+against the published 1.3.0 tarball, 185,065 bytes over a pipe, parsed. So no
+released version of this package truncated anything. That is not a design
+anyone here can take credit for. It is the same code written twice, once
+safely and once not, and only the unsafe one was new.
+
+### Added
+
+- **`surfaces`: scan agent surfaces rather than code.** MCP server
+  configuration and prompt or skill files are read by an agent as
+  configuration and as instruction, and neither semgrep nor `npm audit` reads
+  either one. Takes `--inventory <file.json>` or `--root <dir>`, emits findings
+  as JSON with `--json`. Ten categories, listed by `--list-categories` so a
+  consumer builds its own map from the engine rather than keeping a copy that
+  drifts.
+- **`--policy balanced|strict`.** `balanced` treats a directive inside a code
+  fence as documentation and reports it at medium. `strict` treats it as text
+  the agent will read anyway and reports it in full, which is the right
+  reading for anything consuming raw markdown. There is no `off` level for any
+  category: a knob that silences a rule is the first thing reached for when a
+  tool is noisy, and then you are blind to every later instance of it.
+  Concealed characters are judged independently of the fence and always win,
+  because a fence does not defeat a zero-width character.
+- **Findings carry no matched text by default.** `--evidence` attaches it on
+  request. This is the default rather than the caller's responsibility because
+  the caller is sometimes an LLM prompt, and quoting the payload there delivers
+  the exact thing the finding is warning about.
+- **Configuration is never read from the tree being scanned.** A `.glance.json`
+  found inside a scan target is ignored and named in a warning. Otherwise a
+  repository can ship a file that turns off detection on itself.
+
 ### Changed
 
 - **Findings at the same file and line collapse into one.** Two semgrep rules
@@ -28,6 +87,18 @@ git log.
   The count of further advisories for the same package is appended.
 
 ### Fixed
+
+- **`surfaces` no longer truncates its report on a pipe.** See above.
+  `src/cli.ts` sets `process.exitCode` and returns; the exits that remain flush
+  stdout before terminating. `tests/pipe.js` spawns the built binary, reads it
+  through a real pipe, and asserts a report over 64 KB parses. It is
+  table-driven over every subcommand: a command is either exercised there or
+  listed as exempt with a reason, so a new command that is neither fails the
+  suite. The check fails at exactly 65536 bytes against the previous build.
+- **CI runs the test suite.** It previously ran `tsc --noEmit` and nothing
+  else, so no test in this repository was gating any push. `npm test` and a
+  semgrep install are now part of the build job, and `prepublishOnly` already
+  runs build and test, so a truncating build cannot be published.
 
 - **Local rule ids no longer carry the install path.** semgrep names a rule
   loaded from `--config=<dir>` after that directory, so our own rule was

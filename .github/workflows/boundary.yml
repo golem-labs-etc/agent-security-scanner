@@ -52,3 +52,17 @@ jobs:
         with: { node-version: '22' }
       - run: npm ci || npm install
       - run: npx tsc --noEmit
+
+      # semgrep is what `analyze` runs; without it that command finds nothing
+      # and the pipe check below cannot produce a report large enough to test
+      # what it is there to test. It would then SKIP, loudly, and the rule
+      # would be aspirational. Installing it here makes the rule real.
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install semgrep
+
+      # The suite was not running here at all: this job type-checked and
+      # stopped. The 64 KB stdout truncation would have been caught by
+      # tests/pipe.js on the commit that introduced it, had anything run it.
+      - run: npm run build
+      - run: npm test
