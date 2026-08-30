@@ -249,6 +249,42 @@ def run_all(tmp: Path, scanner) -> int:
               if leaked is None else f"leaked {leaked!r}")
 
         print()
+        print("V3b no evidence field ever reaches the formatter")
+        # Structural, beside the substring backstop rather than instead of it.
+        # The 12-character threshold is a number someone picked, and it degrades
+        # the moment a payload gets shorter or a trailer gets longer. This does
+        # not: it asserts on the objects, so there is nothing to tune.
+        captured = []
+        orig_fmt = hooks.format_findings
+
+        def capturing(findings):
+            captured.append([dict(f) for f in findings])
+            return orig_fmt(findings)
+
+        hooks.format_findings = capturing
+        try:
+            hooks.reset_for_tests()
+            use_home(hostile)
+            runner.run_scan(hostile)
+            (runner._baseline_path(hostile)).unlink(missing_ok=True)
+            hooks.pre_llm_call(session_id="v3b")
+        finally:
+            hooks.format_findings = orig_fmt
+
+        handed = [f for batch in captured for f in batch]
+        with_ev = [f for f in handed if "evidence" in f]
+        # And the cache the formatter reads from must be clean at the source.
+        cached = (runner.get_cached() or {}).get("findings", [])
+        cached_ev = [f for f in cached if "evidence" in f]
+        check(
+            "V3b",
+            bool(handed) and not with_ev and not cached_ev,
+            f"{len(handed)} finding(s) handed to the formatter, "
+            f"{len(with_ev)} carrying an evidence key; "
+            f"{len(cached_ev)} of {len(cached)} cached findings carry one",
+        )
+
+        print()
         print("V4  the quoted-payload case")
         # A skill whose first 80 characters read as an instruction if quoted.
         write(
@@ -343,6 +379,69 @@ def run_all(tmp: Path, scanner) -> int:
     n = hooks.announced_session_count()
     check("V8", n <= hooks._MAX_SESSIONS,
           f"500 sessions -> {n} retained (cap {hooks._MAX_SESSIONS})")
+
+    print()
+    print("V11 the spawned command carries --policy strict and never --evidence")
+    # This is the assertion that stops --evidence reaching the agent path
+    # through a later edit. Nothing else in the suite would catch that: the
+    # output would simply start carrying matched text and every other check
+    # would still pass.
+    seen_argv = []
+    import subprocess as sp2
+
+    real_run = sp2.run
+
+    def recording_run(cmd, *a, **k):
+        if isinstance(cmd, (list, tuple)):
+            seen_argv.append(list(cmd))
+        return real_run(cmd, *a, **k)
+
+    sp2.run = recording_run
+    try:
+        hooks.reset_for_tests()
+        use_home(hostile)
+        runner.run_scan(hostile)
+    finally:
+        sp2.run = real_run
+
+    scan_cmds = [c for c in seen_argv if "surfaces" in c]
+    has_strict = all(
+        "--policy" in c and c[c.index("--policy") + 1] == "strict" for c in scan_cmds
+    )
+    no_evidence = all("--evidence" not in c for c in scan_cmds)
+    check(
+        "V11",
+        bool(scan_cmds) and has_strict and no_evidence,
+        f"{len(scan_cmds)} scan invocation(s); --policy strict on all: {has_strict}; "
+        f"--evidence on none: {no_evidence}",
+    )
+    for c in scan_cmds[:1]:
+        redacted = [("<inventory>" if x.endswith(".json") and "glance-inv" in x else x) for x in c]
+        print(f"        argv: {' '.join(redacted)}")
+
+    print()
+    print("V12 an evicted session re-announces (known behaviour, documented)")
+    # Answering the eviction question empirically rather than by reading the
+    # code: does a session that falls out of the LRU repeat itself?
+    hooks.reset_for_tests()
+    runner._state.cache = {
+        "digest": "d",
+        "findings": [
+            {"id": "eeee0001", "category": "prompt_injection", "severity": "high",
+             "path": "/p/SKILL.md", "line": 2}
+        ],
+    }
+    first_seen = hooks.pre_llm_call(session_id="victim") is not None
+    for i in range(hooks._MAX_SESSIONS + 8):
+        hooks.pre_llm_call(session_id=f"filler-{i}")
+    evicted = "victim" not in [k for k in hooks._announced]
+    repeats = hooks.pre_llm_call(session_id="victim") is not None
+    check(
+        "V12",
+        first_seen and evicted and repeats,
+        f"evicted={evicted}, re-announced={repeats} "
+        "(expected: yes, and it is in the README)",
+    )
 
     print()
     print("V9  hermes plugins doctor")

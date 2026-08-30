@@ -29,7 +29,7 @@ dashboard/plugin_api.py      /health /stats (cache reads), /scan (explicit)
 dashboard/manifest.json
 desktop/plugin.js            pane; polls /stats, never /scan
 skills/glance-security/      what the agent should do with a finding
-tests/test_adapter.py        V1–V9
+tests/test_adapter.py        V1–V12
 ```
 
 ## The rule that shapes everything
@@ -66,6 +66,27 @@ The cache is one global object, because the scanned filesystem is not
 per-session. The *announced* sets are per-session and bounded to 256 sessions,
 so one session's turn can never rewrite another's state and a long-lived
 process cannot grow without limit.
+
+### Known behaviour: an evicted session re-announces
+
+The announced sets are an LRU capped at 256 sessions. If a session falls out of
+that window — which takes 256 *other* sessions being touched more recently — its
+record of what it has already said is gone, and the next turn on it re-announces
+findings it had announced before.
+
+Verified rather than reasoned about: `V12` in the suite evicts a session
+deliberately and asserts the repeat.
+
+This is accepted, not fixed. An actively-used session is moved to the end of the
+LRU on every turn, so it is evicted only after 256 other sessions have been more
+recently active, which means the case is a session that went quiet for a long
+time and then resumed. The alternatives are worse: an unbounded dict is a slow
+leak in a long-lived process, and persisting announced sets to disk would make a
+duplicate line survive a restart, which is a more annoying failure than a
+duplicate line after a very long gap.
+
+Baselined findings are never affected. Only non-baselined critical and high
+findings can repeat this way, and they repeat once.
 
 ## Baselines
 
@@ -127,8 +148,21 @@ the adapter reports that it is not scanning rather than pretending to.
 python3 adapters/hermes/tests/test_adapter.py
 ```
 
-V1–V9. V9 needs `hermes` on `PATH`; V3–V6 need `glance-scanner`. Fixtures are
-written by the suite into a throwaway tree and are not shared with any corpus.
+V1–V12. V9 needs `hermes` on `PATH`; V3–V6, V3b and V11 need `glance-scanner`.
+Fixtures are written by the suite into a throwaway tree and are not shared with
+any corpus.
+
+Two of these guard the agent-facing boundary and are worth knowing about:
+
+- **V3b** asserts structurally that no `evidence` key is ever present on the
+  objects handed to the formatter, or in the cache they come from. The
+  12-character substring check in V3 stays as a backstop, but it is a threshold
+  someone picked and it degrades when a payload shortens or a trailer lengthens.
+  V3b has nothing to tune.
+- **V11** asserts the spawned command line carries `--policy strict` and never
+  `--evidence`. Nothing else in the suite would catch that regression: the
+  output would simply start carrying matched text and every other check would
+  still pass.
 
 Paths are realpath'd on both sides of every comparison. On macOS `/var` is a
 symlink to `/private/var`, and comparing a resolved path against an unresolved
