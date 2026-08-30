@@ -21,7 +21,7 @@
 import { Finding, Category, Severity, Policy } from './types';
 import { RawFinding } from './mcp-rules';
 import {
-  eachMatch, lineAt, stripInvisible, foldConfusables,
+  eachMatch, lineAt, stripInvisible, foldConfusables, hasConfusable,
   codeRanges, maskRanges, inRanges, Range,
 } from './text';
 import { findObfuscation } from './obfuscation';
@@ -136,6 +136,24 @@ function styleHides(style: string): boolean {
 // ── the ruleset ────────────────────────────────────────────────────────────
 
 /**
+ * Does this span carry concealment that a code fence does not defeat?
+ *
+ * Precedence rule, and the reason it is a separate check rather than a side
+ * effect of rule ordering: concealed characters are evaluated independently of
+ * the fence policy, and they win. A homoglyph inside an HTML comment inside a
+ * fence is still concealed -- the fence made the *comment* visible, and did
+ * nothing at all to the homoglyph. So the downgrade path must not be able to
+ * swallow it.
+ *
+ * Soft hyphen is excluded for the same reason it is excluded from
+ * `obfuscated_text`: it turns up inside ordinary words pasted out of a word
+ * processor.
+ */
+function concealedInSpan(s: string): boolean {
+  return hasConfusable(s) || /[\u200B\u200C\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/.test(s);
+}
+
+/**
  * How a directive found inside a code fence is reported.
  *
  * `balanced` downgrades it to `fenced_directive` at medium. Not info: info is
@@ -238,7 +256,10 @@ export function scanPromptFile(
     if (!(directive || exfil || addressed)) return;
 
     const evidence = 'html comment: ' + body.trim().slice(0, 120);
-    if (inRanges(ranges, m.index)) {
+    // Concealed characters win. A fence renders the comment visible; it does
+    // not render a homoglyph or a zero-width split visible, so that part of the
+    // concealment survives and the finding stays critical under every policy.
+    if (inRanges(ranges, m.index) && !concealedInSpan(m[0])) {
       const v = fenceVerdict(policy, 'hidden_instruction', 'critical');
       push(v.category, v.severity, lineAt(raw, m.index), 'in fenced block: ' + evidence);
     } else {
@@ -252,7 +273,7 @@ export function scanPromptFile(
     if (!styleHides(style)) return;
 
     const evidence = 'hidden html <' + m[1] + ' style="' + style.trim().slice(0, 80) + '">';
-    if (inRanges(ranges, m.index)) {
+    if (inRanges(ranges, m.index) && !concealedInSpan(m[0])) {
       const v = fenceVerdict(policy, 'hidden_instruction', 'critical');
       push(v.category, v.severity, lineAt(raw, m.index), 'in fenced block: ' + evidence);
     } else {

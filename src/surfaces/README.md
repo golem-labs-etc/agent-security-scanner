@@ -108,8 +108,20 @@ load-bearing. Without it, a page documenting hidden instructions cannot show a
 hidden-comment example, which is the single most likely thing such a page
 contains, and the "reads its own documentation" property fails.
 
+**Precedence: concealed characters are evaluated independently of the fence
+policy, and they win.** A homoglyph or zero-width split inside an HTML comment
+inside a fence resolves to `hidden_instruction` critical under every policy,
+never to `fenced_directive` medium. The fence made the *comment* visible; it did
+nothing to the homoglyph, so that concealment survives and the downgrade path
+cannot swallow it. Each finding is judged on its own span, so a plainly visible
+directive elsewhere in the same comment still downgrades on its own merits.
+
 An agent consuming raw markdown never sees a fence, which is why Part B passes
 `strict`.
+
+**Known and accepted:** a plain fenced HTML comment remains a bypass under
+`balanced`. It is the same bypass plain fenced text already has, so the split
+widens nothing, and under `strict` it is critical anyway.
 
 ### `hidden_instruction` is a reveal test
 

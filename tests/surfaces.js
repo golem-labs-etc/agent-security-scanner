@@ -78,6 +78,14 @@ const POSITIVE = [
     want: { category: 'obfuscated_text', severity: 'high' } },
   { id: 'P14', fixture: 'P14_bidi_override.md', kind: 'prompt',
     want: { category: 'obfuscated_text', severity: 'high' } },
+
+  // Precedence: concealed characters are evaluated independently of the fence
+  // policy and win. A homoglyph inside an HTML comment inside a fence must not
+  // be swallowed by the downgrade path.
+  { id: 'P16a', fixture: 'P16_concealed_in_fenced_comment.md', kind: 'prompt', policy: 'balanced',
+    want: { category: 'hidden_instruction', severity: 'critical' } },
+  { id: 'P16b', fixture: 'P16_concealed_in_fenced_comment.md', kind: 'prompt', policy: 'strict',
+    want: { category: 'hidden_instruction', severity: 'critical' } },
 ];
 
 const NEGATIVE = [
