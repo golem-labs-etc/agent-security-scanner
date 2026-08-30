@@ -86,6 +86,22 @@ const POSITIVE = [
     want: { category: 'hidden_instruction', severity: 'critical' } },
   { id: 'P16b', fixture: 'P16_concealed_in_fenced_comment.md', kind: 'prompt', policy: 'strict',
     want: { category: 'hidden_instruction', severity: 'critical' } },
+
+  // The two categories that had no positive fixture until now. Both are
+  // agent-facing severities, so both were shipping with no evidence they
+  // detect anything. See the coverage check at the end of this file.
+  { id: 'P17', fixture: 'P17_shell_metachar.json', kind: 'inventory',
+    want: { category: 'command_injection_risk', severity: 'high' } },
+  { id: 'P18', fixture: 'P18_literal_credential.md', kind: 'prompt',
+    want: { category: 'credential_leak', severity: 'critical' } },
+
+  // A third with no positive fixture, found only once negative fixtures
+  // stopped counting toward coverage. It fired in N1 as a side effect of that
+  // fixture using `npx -y`, which is not the same as anything asserting it
+  // works. info severity, so it never reaches an agent, but the gap was the
+  // same gap.
+  { id: 'P19', fixture: 'P19_unpinned_uvx.json', kind: 'inventory',
+    want: { category: 'unpinned_remote_exec', severity: 'info' } },
 ];
 
 const NEGATIVE = [
@@ -126,6 +142,20 @@ const NEGATIVE = [
   { id: 'N12', fixture: 'N1_typical.json', kind: 'inventory', policy: 'strict',
     rule: 'clean machine under strict, still zero high',
     check: (r) => r.counts.high === 0 && r.counts.critical === 0 },
+
+  // Pins an asymmetry found while writing P18, so it is a decision on record
+  // rather than an accident nobody noticed. `secret_in_config` runs values
+  // through `secretShape`, which includes a generic high-entropy fallback.
+  // `credential_leak` runs free text through `findSecretsInText`, which
+  // applies the vendor prefixes ONLY. So a 39-character high-entropy token in
+  // prose does not fire, while the same value in an MCP env var does.
+  //
+  // Defensible: prose is full of hashes, UUIDs and base64 blobs, and an
+  // entropy rule there would be noise. Undocumented until now, and it is why
+  // the first P18 fixture written for this gap fired nothing at all.
+  { id: 'N13', fixture: 'N13_high_entropy_prose.md', kind: 'prompt', policy: 'strict',
+    rule: 'high-entropy token in prose is not a credential_leak (vendor shapes only)',
+    check: (r) => !r.findings.some((x) => x.category === 'credential_leak') },
 ];
 
 async function scanCase(c) {
@@ -337,25 +367,61 @@ function declaredPaths(c) {
     console.log('  FAIL  fingerprints differ between identical runs');
   }
 
-  // Part B's dashboard colour map must be exhaustive over the categories this
-  // engine emits. Assert the exported list covers everything actually produced,
-  // so adding a rule without adding a colour fails here rather than there.
+  // Category coverage, in BOTH directions.
+  //
+  //   1. every category the engine emits is declared in CATEGORIES, so the
+  //      dashboard colour map cannot miss one;
+  //   2. every declared category is emitted by at least one positive fixture.
+  //
+  // Direction 2 is the one that matters and it is the one this check did not
+  // have. It reported "10 declared, 8 exercised, 0 uncovered" and passed. That
+  // sentence was true and told you nothing: `command_injection_risk` (high)
+  // and `credential_leak` (critical) had never been observed to fire, and both
+  // are severities the Hermes adapter puts in front of an agent. A rule with
+  // no positive fixture is a rule shipping on the claim that it works.
+  //
+  // Counting what did fire is not coverage of what could. Passing on a count
+  // while two rules were unverified is the same shape as CI reporting green
+  // while running no tests.
   const emitted = {};
-  for (const c of POSITIVE.concat(NEGATIVE)) {
+  for (const c of POSITIVE) {
     const r = await scanCase(c);
     for (const x of r.findings) emitted[x.category] = true;
   }
-  const uncovered = Object.keys(emitted).filter((k) => CATEGORIES.indexOf(k) === -1);
-  if (CATEGORIES.length === 10 && uncovered.length === 0) {
+  const negativeOnly = {};
+  for (const c of NEGATIVE) {
+    const r = await scanCase(c);
+    for (const x of r.findings) negativeOnly[x.category] = true;
+  }
+
+  // Declared but never produced by a positive fixture. A category that only
+  // ever appears incidentally in a negative fixture does not count: negative
+  // fixtures assert what must NOT fire, so a category riding along in one is
+  // not evidence that anything detects it on purpose.
+  const unexercised = CATEGORIES.filter((k) => !emitted[k]);
+
+  // Produced but not declared. This is what the old check tested.
+  const undeclared = Object.keys(emitted)
+    .concat(Object.keys(negativeOnly))
+    .filter((k) => CATEGORIES.indexOf(k) === -1);
+
+  if (unexercised.length === 0 && undeclared.length === 0) {
     pass++;
-    console.log('  ok    CATEGORIES exhaustive: ' + CATEGORIES.length +
-                ' declared, ' + Object.keys(emitted).length +
-                ' exercised, 0 uncovered');
+    console.log('  ok    CATEGORIES coverage: ' + CATEGORIES.length +
+                ' declared, all ' + CATEGORIES.length +
+                ' emitted by a positive fixture, 0 undeclared');
   } else {
     fail++;
-    failures.push('categories-exhaustive');
-    console.log('  FAIL  CATEGORIES: ' + CATEGORIES.length + ' declared, uncovered: ' +
-                (uncovered.join(', ') || 'none'));
+    failures.push('categories-coverage');
+    if (unexercised.length) {
+      console.log('  FAIL  CATEGORIES: no positive fixture ever emits: ' +
+                  unexercised.join(', ') +
+                  '  (a rule with no fixture has no evidence it detects anything)');
+    }
+    if (undeclared.length) {
+      console.log('  FAIL  CATEGORIES: emitted but not declared: ' +
+                  undeclared.join(', '));
+    }
   }
 
   console.log('');

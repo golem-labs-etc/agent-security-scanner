@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "mcp_servers": [
+    {
+      "name": "notes",
+      "source": "/tmp/glance-fixture/P19/config.yaml",
+      "command": "uvx",
+      "args": ["mcp-server-notes"],
+      "env": {}
+    }
+  ],
+  "prompt_files": [],
+  "code_files": []
+}

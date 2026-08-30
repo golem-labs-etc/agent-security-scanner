@@ -69,9 +69,29 @@ These are prompt rules, not code rules. semgrep is never run on them.
 | `prompt_injection` | high | instruction-override phrasing directed at the agent |
 | `hidden_instruction` | critical | text present to the parser and absent to the reader |
 | `exfiltration_instruction` | critical | instruction to send a local file or env value to a network destination |
-| `credential_leak` | critical | a literal secret value in the file |
+| `credential_leak` | critical | a literal secret value in the file, by vendor shape |
 | `fenced_directive` | medium | a directive quoted inside a code fence: unproven, not benign |
 | `obfuscated_text` | high | text is deliberately concealed, whatever it says |
+
+### `credential_leak` uses vendor shapes only, and `secret_in_config` does not
+
+The two secret rules are deliberately not symmetric.
+
+`secret_in_config` judges an MCP env **value**, so it can afford a generic
+high-entropy fallback: the value is already known to be a configured credential
+slot, and the only question is whether it holds a literal or a reference.
+
+`credential_leak` scans free **prose**, where a long high-entropy token is far
+more often a checksum, a UUID, a commit sha or a base64 blob than a key. It
+therefore matches the vendor prefixes only: `sk-`, `sk-ant-`, `ghp_`, `AKIA`,
+`AIza`, `xox`, `glpat-`, `npm_`, `hf_`, a JWT, a PEM private key header. A
+39-character high-entropy string in a paragraph does not fire.
+
+The cost is a real miss: a bearer token from a vendor with no recognisable
+prefix, pasted into a skill file, is not detected. That is a known limit, not
+an oversight, and `N13` in the suite pins it so it stays a decision rather than
+becoming an accident. Raise it only with a fixture that shows what the noise
+looks like.
 
 ### Fenced code, and the policy that governs it
 

@@ -95,6 +95,15 @@ safely and once not, and only the unsafe one was new.
   table-driven over every subcommand: a command is either exercised there or
   listed as exempt with a reason, so a new command that is neither fails the
   suite. The check fails at exactly 65536 bytes against the previous build.
+- **Three detection categories had no test proving they fire.** The coverage
+  check counted categories that were emitted and confirmed each was declared,
+  then reported "10 declared, 8 exercised, 0 uncovered" and passed. It never
+  asked the question that matters, which is whether every declared category is
+  emitted by anything. `credential_leak` (critical), `command_injection_risk`
+  (high) and `unpinned_remote_exec` (info) had no positive fixture. The first
+  two are severities the Hermes adapter puts in front of an agent. All three
+  now have one, and the check fails by name on any declared category that no
+  positive fixture emits.
 - **CI runs the test suite.** It previously ran `tsc --noEmit` and nothing
   else, so no test in this repository was gating any push. `npm test` and a
   semgrep install are now part of the build job, and `prepublishOnly` already
