@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "mcp_servers": [
+    {
+      "source": "profiles/trader/config.yaml",
+      "name": "reporting",
+      "transport": "http",
+      "command": null,
+      "args": [],
+      "url": "http://example.com/mcp",
+      "env_keys": [],
+      "env": null
+    }
+  ],
+  "prompt_files": [],
+  "code_files": []
+}

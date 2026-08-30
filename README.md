@@ -152,6 +152,48 @@ npx glance-scanner analyze --path . --ai --filter-fp
 We have not measured the false-positive rate against a public benchmark, so
 this README does not quote one.
 
+## Scanning agent surfaces
+
+Code is not the only thing an agent reads. It reads MCP server configs as
+configuration and skill files as instruction, and `npm audit` and semgrep read
+neither.
+
+```bash
+glance-scanner surfaces --root ~/.hermes --json
+glance-scanner surfaces --inventory inventory.json --json
+```
+
+It reports four things about MCP entries — plain-HTTP transport to a
+non-loopback host, a literal secret held inline in a config, shell
+metacharacters that would actually be interpreted, and, at `info`, an unpinned
+`npx -y`-style fetch-and-run — and four about prompt files: instruction-override
+phrasing, text hidden from a human reader but not from the parser, an
+instruction to send local data to a network destination, and a literal
+credential.
+
+Findings carry **no matched text by default**. Pass `--evidence` to see it. The
+default is set in the engine rather than left to the caller because the caller
+is sometimes an LLM prompt, and quoting an injection payload into an agent's
+context is delivering it.
+
+Fenced code blocks are treated as documentation, so a security page can quote
+an attack without tripping the scanner reading it. A directive found inside a
+fence is not dropped: under the default `balanced` policy it is reported as
+`fenced_directive` at medium, and `--policy strict` reports it as written.
+Concealed characters are fence-immune under both, because a fence does nothing
+to hide a homoglyph.
+
+A ninth and tenth check, `fenced_directive` and `obfuscated_text`, round out ten
+categories. `obfuscated_text` needs no phrase list: it fires on a zero-width
+character between two ASCII letters, a Cyrillic or Greek letter inside an
+otherwise Latin word, or a bidirectional control (Trojan Source,
+CVE-2021-42574).
+
+Configuration is never read from the tree being scanned, and there is no `off`
+level.
+
+Full rules, schema and limitations: [`src/surfaces/README.md`](src/surfaces/README.md).
+
 ## The extra Python scanners
 
 These are optional and separate from the default scan. Install them once and

@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "mcp_servers": [
+    {
+      "source": "profiles/default/config.yaml",
+      "name": "filesystem",
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/dev/projects"
+      ],
+      "url": null,
+      "env_keys": [],
+      "env": null
+    },
+    {
+      "source": "profiles/default/config.yaml",
+      "name": "git",
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-git"
+      ],
+      "url": null,
+      "env_keys": [],
+      "env": null
+    },
+    {
+      "source": "profiles/default/config.yaml",
+      "name": "memory",
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ],
+      "url": null,
+      "env_keys": [],
+      "env": null
+    }
+  ],
+  "prompt_files": [],
+  "code_files": []
+}
