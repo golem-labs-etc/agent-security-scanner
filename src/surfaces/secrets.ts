@@ -38,7 +38,7 @@ const PLACEHOLDER_RE = [
  * they are unambiguous; the generic high-entropy rule is last and is the one
  * that can be wrong.
  */
-const SECRET_SHAPES: Array<{ name: string; re: RegExp }> = [
+const SECRET_SHAPES: Array<{ name: string; re: RegExp; literal?: boolean }> = [
   { name: 'openai', re: /\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}\b/ },
   { name: 'anthropic', re: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/ },
   { name: 'github_pat', re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b/ },
@@ -51,7 +51,7 @@ const SECRET_SHAPES: Array<{ name: string; re: RegExp }> = [
   { name: 'npm', re: /\bnpm_[A-Za-z0-9]{36}\b/ },
   { name: 'hf', re: /\bhf_[A-Za-z0-9]{30,}\b/ },
   { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
-  { name: 'private_key', re: /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/ },
+  { name: 'private_key', re: /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/, literal: true },
 ];
 
 /** True when the value is a pointer to a secret rather than the secret. */
@@ -107,6 +107,27 @@ export function secretShape(value: string): string | null {
 }
 
 /**
+ * A vendor-prefixed token whose body is filler rather than a key.
+ *
+ * `sk-xxxxxxxxxxxxxxxxxxxx` in a config example matches the openai shape
+ * exactly and is not a credential. `secretShape` already refuses placeholders
+ * before it ever reaches the shape list; `findSecretsInText` did not, and so a
+ * bundled skill documenting an MCP header produced a critical `credential_leak`
+ * on a clean install. It is the same asymmetry between the two entry points
+ * that `N13` pins on the shape list itself.
+ *
+ * A run of four identical characters does not occur in a real key of this
+ * length -- for a 20-character base62 token the chance is about one in twelve
+ * thousand -- and the named fillers never do. `private_key` opts out, because
+ * its shape is a literal banner with five dashes in it.
+ */
+function isFillerToken(match: string): boolean {
+  if (isPlaceholder(match)) return true;
+  if (/(.)\1{3,}/.test(match)) return true;
+  return /(your|example|placeholder|redacted|changeme|dummy|sample|todo|fixme)/i.test(match);
+}
+
+/**
  * Find literal credentials inside free text (a prompt file), returning the
  * character offset of each. Used by `credential_leak`.
  */
@@ -116,6 +137,7 @@ export function findSecretsInText(
   const out: Array<{ index: number; match: string; shape: string }> = [];
   for (const s of SECRET_SHAPES) {
     eachMatch(new RegExp(s.re.source, 'g'), text, (m) => {
+      if (!s.literal && isFillerToken(m[0])) return;
       out.push({ index: m.index, match: m[0], shape: s.name });
     });
   }

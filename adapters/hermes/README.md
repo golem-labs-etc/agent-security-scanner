@@ -89,6 +89,39 @@ duplicate line after a very long gap.
 Baselined findings are never affected. Only non-baselined critical and high
 findings can repeat this way, and they repeat once.
 
+## What is in scope, and what is not
+
+`discover.py` walks exactly three roots:
+
+```
+$HERMES_HOME/skills
+$HERMES_HOME/plugins
+$HERMES_HOME/profiles/*/skills
+```
+
+It does **not** walk `$HERMES_HOME/hermes-agent/`. That directory holds the
+distribution's own bundled skills and, under `optional-skills/`, the catalogue
+of skills that are not installed. Scanning an uninstalled catalogue is scanning
+an app store: nothing there reaches an agent, and every finding in it is a
+finding about software the owner has not chosen to run.
+
+`glance-scanner surfaces --root <dir>` is a different thing. It walks whatever
+it is pointed at, to whatever depth, and pointed at `$HERMES_HOME` it sweeps
+`hermes-agent/optional-skills/` along with everything else. That is the CLI
+behaving as asked, not the adapter's inventory. On this machine the two differ
+by 206 files: 1904 through the adapter, 2110 through `--root`.
+
+## The same skill file in twenty-two profiles
+
+A profile gets its own copy of the skills it uses, so `github-repo-management`
+exists twenty-two times on this machine, byte for byte identical. The scanner
+fingerprints a prompt finding on the file's contents rather than its path, so
+that is one finding with `occurrences: 22`, not twenty-two findings. The other
+twenty-one paths are on the finding in `also_in`.
+
+The agent feed announces the finding once. Before this, a single problem in one
+bundled skill produced twenty-two lines.
+
 ## Baselines
 
 The first scan on a machine records what was already there and reports none of

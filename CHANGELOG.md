@@ -7,6 +7,117 @@ git log.
 
 ## Unreleased
 
+**The scanner returned 1508 critical and 77 high findings on a stock agent
+install, and not one of them was an attack.** 2110 files, 384 of them flagged.
+The suite was 61 for 61 green throughout. Nothing here was found by a test;
+all of it was found by running the tool on a real machine for the first time.
+
+Seven defects, and one design gap.
+
+### Fixed
+
+- **A code fence masked its opening line and one line of body, and no more.**
+  The terminator was `$` under the `m` flag, which matches at the end of every
+  line, so the lazy body stopped at the first newline. Everything past that was
+  scanned as prose. On a real skill file that is most of every fenced block:
+  the shell snippet a skill documents came back as `exfiltration_instruction`
+  at critical under *both* policies, because the downgrade path never saw it as
+  fenced. Reported as a policy failure; it was not one. The fence was never
+  found.
+- **`exfiltration_instruction` matched egress, not exfiltration.** It accepted
+  the English nouns -- *secret*, *credential*, *api key*, *password*, *token*,
+  *cookie*, *environment variable* -- as sensitive sources. Those are what a
+  skill documenting an HTTP call says in its own prose. It also treated every
+  hidden directory as a credential store, so `~/.local/bin` in a `curl ... | sh`
+  installer was a source. Sources are now named credential stores only.
+- **A credential variable used to authenticate is no longer a source.** A
+  `$VAR` inside the destination URL, after a header whose name contains
+  key/token/auth/secret/credential, as the argument to `curl -u`, or on the
+  right of an uppercase shell assignment, is authentication to the endpoint
+  being called. That one shape was 25 of 30 criticals on three stock files.
+  The cost is documented in `src/surfaces/README.md`: a stolen token sent in an
+  auth header looks identical and is missed.
+- **Loopback is not a network destination.** `curl http://localhost:8644/health`
+  crosses no network. `unencrypted_transport` already knew this; this rule
+  disagreed, and a skill's own health check was critical.
+- **The rule's window was a paragraph, and its reported line was wrong.** A
+  line-joining step meant for wrapped prose joined YAML frontmatter, list items
+  and checklists too, so a `curl` on one key, an "API key" on another and a URL
+  on a third were one "sentence" reported at line 1. The window is now an
+  explicit 240 characters, lines join only where prose actually wraps, inside a
+  fence only across a trailing backslash, and the reported span is exact --
+  `end_line` is set whenever a finding covers more than one line.
+- **A word that is the local part of an email address is not a verb.**
+  `ssh-keygen -C "their-email@example.com" -f ~/.ssh/id_ed25519` was critical:
+  `email` read as the verb, `example.com` as the destination.
+- **`prompt_injection` fired on "tell the user".** "don't tell the user to run
+  `/skin`", "never tell a user to put a non-credential setting in `.env`", and
+  "Do NOT explain how @mention works to the user" -- which matched because
+  `@mention` contains `mention`. 54 of 65 findings were that one shape. The
+  category now reads instruction-override phrasing only. The concealment
+  phrases still fire where the text carrying them is itself hidden, in an HTML
+  comment or behind a homoglyph, which is where they mean something.
+- **`obfuscated_text` fired on Greek.** All 12 hits were finance documents
+  writing `ΔAR`, `ΔInventory`, `ΔCommon Stock`. The original specification
+  treating Cyrillic and Greek as one signal was wrong: Cyrillic inside a Latin
+  word has no innocent explanation and Greek does. Greek stays in the homoglyph
+  fold used by `hidden_instruction`, which additionally requires a directive
+  phrase to appear once the folding is undone.
+- **A placeholder is not a credential.** `sk-xxxxxxxxxxxxxxxxxxxx` in a
+  documented config example matched the OpenAI shape exactly. `secretShape`
+  already refused placeholders; `findSecretsInText` did not.
+
+### Changed
+
+- **One problem is reported once, with every address it has.** A prompt
+  finding's `id` is now fingerprinted on the file's SHA-256 rather than its
+  path. A skill file that exists in twenty-two profiles, byte for byte
+  identical, was twenty-two separate findings; it is now one, carrying
+  `occurrences: 22` and the other twenty-one paths in `also_in`. Keying on
+  content also means the id survives a profile being added or removed, which a
+  path-derived id did not. MCP and code findings keep the path: there is no
+  file content to key them on.
+- `Finding` gains `end_line`, `occurrences` and `also_in`, all optional and all
+  absent when they would say nothing.
+
+### Added
+
+- **Three stock skill files, verbatim, as negative fixtures**, asserted at zero
+  critical and zero high under both policies. Every other negative in the suite
+  is short, hand-written, and has its payload on one line, which is why 61 of
+  61 passed while the real number was 1508. Provenance and licence are in
+  `tests/fixtures/surfaces/real/README.md`.
+- **`FENCE`, a structural check on fence extent.** When the fence terminator
+  was reverted deliberately, no fixture failed -- the other narrowings kept the
+  real files clean either way. The extent is now asserted directly.
+
+### Known gap
+
+There is no positive fixture for a fenced multi-line exfiltration, and none for
+a credential variable posted as data rather than as authentication. Both would
+prove the narrowings did not simply switch the rule off. Writing either
+requires a fixture carrying a working payload, and on the machine this was
+developed on the local guard's own secret-egress rule blocks the write. Stated
+here rather than left to be inferred from a green suite.
+
+### Numbers
+
+Same machine, same 2110 files, `--policy balanced`, which is what produced the
+1508:
+
+| | before | after |
+|---|---|---|
+| critical | 1508 | 0 |
+| high | 77 | 3 |
+| files flagged | 384 | 3 |
+
+The three remaining high findings are two red-teaming skills that contain
+attack strings by design -- a Cyrillic homoglyph in `godmode` and "ignore
+previous instructions" in `darwinian-evolver`. Under `--policy strict`, which
+is what the Hermes adapter passes, the same scan is 0 critical and 5 high, and
+the adapter's own inventory of 1904 files is 0 critical and 2 high.
+
+
 ## 1.3.1
 
 **The scanner threw away part of its own report.** Not crashed, not errored,

@@ -94,13 +94,37 @@ export interface Inventory {
 }
 
 export interface Finding {
-  /** Stable fingerprint over category, path, line and normalized evidence. */
+  /**
+   * Stable fingerprint.
+   *
+   * For a prompt finding the fingerprint is over category, line, normalized
+   * evidence and the SHA-256 of the file's contents -- not over the path. A
+   * skill file that exists in twenty-two profiles is one file twenty-two times,
+   * and an id derived from the path made it twenty-two separate problems whose
+   * ids all changed whenever a profile was added or removed. Keyed on content,
+   * the id survives both.
+   *
+   * For an MCP or code finding the path is part of the fingerprint, because
+   * there is no file content to key on.
+   */
   id: string;
   category: Category;
   severity: Severity;
   surface: SurfaceKind;
+  /** The first location, sorted. `also_in` carries the rest. */
   path: string;
   line?: number;
+  /**
+   * Last line the match covers, when it covers more than one.
+   *
+   * Present so a reported span is exact. A rule whose window is wider than a
+   * line has to say how wide, or the reader goes looking at the wrong line.
+   */
+  end_line?: number;
+  /** How many locations carry this identical finding. Absent when it is 1. */
+  occurrences?: number;
+  /** The other locations, sorted. Absent when there are none. */
+  also_in?: string[];
   /**
    * The matched text. Present ONLY when --evidence is passed.
    *

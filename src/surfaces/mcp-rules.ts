@@ -17,6 +17,8 @@ export interface RawFinding {
   surface: 'mcp' | 'prompt';
   path: string;
   line?: number;
+  /** Last line of the match, when a rule's window is wider than one line. */
+  endLine?: number;
   evidence: string;
 }
 

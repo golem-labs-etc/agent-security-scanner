@@ -29,29 +29,148 @@ import { findSecretsInText } from './secrets';
 
 // ── directive vocabulary ───────────────────────────────────────────────────
 
-/** Instruction-override phrasing aimed at the agent. */
-const DIRECTIVE_RE: RegExp[] = [
+/**
+ * Instruction override: aimed at prior instructions, at the agent's identity,
+ * or at its mode.
+ *
+ * This is the list `prompt_injection` reads visible prose with, and it is
+ * deliberately narrower than the list the concealment rules read. Everything
+ * here makes a claim about the instructions themselves.
+ */
+const OVERRIDE_RE: RegExp[] = [
   /\b(?:ignore|disregard|forget|discard|override)\b[^.\n]{0,40}\b(?:all\s+)?(?:previous|prior|above|earlier|preceding|foregoing|former|initial|original|system)\b[^.\n]{0,40}\b(?:instruction|instructions|prompt|prompts|rule|rules|direction|directions|message|messages|context|guideline|guidelines)\b/i,
   /\b(?:ignore|disregard|bypass|override|circumvent)\b[^.\n]{0,30}\b(?:your|the)\b[^.\n]{0,30}\b(?:system\s+prompt|safety|guardrail|guardrails|restriction|restrictions|policy|policies|guideline|guidelines|constraint|constraints)\b/i,
   /\byou\s+are\s+(?:now|no\s+longer)\b[^.\n]{0,60}/i,
-  /\b(?:new|updated|revised|real|true|actual|secret)\s+(?:instruction|instructions|directive|directives|task|objective|system\s+prompt)\s*(?::|are|is)\b/i,
-  /\b(?:do\s*not|don't|never)\b[^.\n]{0,30}\b(?:tell|inform|mention|reveal|disclose|show|report)\b[^.\n]{0,30}\b(?:the\s+)?(?:user|human|operator|owner)\b/i,
-  /\bwithout\s+(?:telling|informing|notifying|asking|alerting)\b[^.\n]{0,20}\b(?:the\s+)?(?:user|human|operator|owner)\b/i,
+  // `task` and `objective` were in this alternation and came out. "The new task
+  // is assigned to the original implementer" is how a work-queue skill is
+  // written; it is not an attempt to replace anyone's instructions.
+  /\b(?:new|updated|revised|real|true|actual|secret)\s+(?:instruction|instructions|directive|directives|system\s+prompt)\s*(?::|are|is)\b/i,
   /\b(?:enter|enable|activate|switch\s+to)\b[^.\n]{0,20}\b(?:developer|dev|debug|god|unrestricted|jailbreak|dan)\s+mode\b/i,
   /\bend\s+of\s+(?:prompt|instructions)\b[^.\n]{0,40}\b(?:new|begin|start)\b/i,
 ];
 
-/** Verbs that move data off the machine. */
+/**
+ * "Keep this from the user."
+ *
+ * Concealment is not instruction override, and by itself it is ordinary
+ * skill-writing. On a real machine these two patterns produced 54 of 65
+ * `prompt_injection` findings, every one of them a line like "don't tell the
+ * user to run `/skin`", "never tell a user to put a non-credential setting in
+ * `.env`", or "Do NOT explain how @mention works to the user" -- which matches
+ * because `@mention` contains `mention`.
+ *
+ * So they no longer fire on visible prose. They fire where the text carrying
+ * them is ITSELF concealed: inside an HTML comment, or exposed by undoing a
+ * homoglyph or a zero-width split. Hidden text that says keep this from the
+ * user is the attack; the same sentence written plainly is documentation.
+ */
+const CONCEALMENT_RE: RegExp[] = [
+  /\b(?:do\s*not|don't|never)\b[^.\n]{0,30}\b(?:tell|inform|mention|reveal|disclose|show|report)\b[^.\n]{0,30}\b(?:the\s+)?(?:user|human|operator|owner)\b/i,
+  /\bwithout\s+(?:telling|informing|notifying|asking|alerting)\b[^.\n]{0,20}\b(?:the\s+)?(?:user|human|operator|owner)\b/i,
+];
+
+/** Both lists, for the rules that only ever read concealed text. */
+const ALL_DIRECTIVES: RegExp[] = OVERRIDE_RE.concat(CONCEALMENT_RE);
+
+/**
+ * Verbs that move data off the machine.
+ *
+ * The trailing `(?!@)` is not decoration. `ssh-keygen -C "their-email@example.com"
+ * -f ~/.ssh/id_ed25519` was a critical finding: `email` inside an address read
+ * as the verb, `example.com` as the destination and `.ssh` as the source. A
+ * word that is the local part of an address is not being used as a verb.
+ */
 const EXFIL_VERB =
-  /\b(?:send|post|upload|transmit|forward|exfiltrate|leak|report|email|mail|submit|push|sync|copy|deliver|curl|wget|fetch|POST)\b/i;
+  /\b(?:send|post|upload|transmit|forward|exfiltrate|leak|report|e-?mail|mail|submit|push|sync|copy|deliver|curl|wget|fetch)\b(?!@)/i;
 
-/** Things on this machine worth stealing. */
-const LOCAL_DATA =
-  /(?:~\/\.[A-Za-z0-9_.-]+|\$HOME|\$\{?[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\}?|\bdotfile|\bdot-file|\.env\b|\.ssh\b|id_rsa|id_ed25519|\.aws\b|\.npmrc\b|\.netrc\b|\/etc\/passwd|\bcredential|\bapi[\s_-]?key|\benv(?:ironment)?\s+variable|\baccess\s+token|\bsecret|\bpassword|\bprivate\s+key|\bsession\s+token|\bcookie)/i;
+/**
+ * A local artefact worth stealing: a dotfile, a home path, a known secret path.
+ *
+ * This list used to also carry the English nouns -- `secret`, `credential`,
+ * `api key`, `password`, `token`, `cookie`, `environment variable`. Those are
+ * what a skill documenting an HTTP call says in its own prose, and with a
+ * `curl` and a URL in the same paragraph they made every such skill a critical
+ * finding. A noun naming a category of secret is not a secret. A path is.
+ *
+ * It also used to carry `~/.<anything>` and `$HOME`, which said that every
+ * hidden directory holds credentials. `~/.local/bin` and `~/.hermes/cache` do
+ * not, and three ordinary `curl ... | sh` installers were critical findings
+ * because of it. The paths named here are stores that hold credentials, and
+ * they are matched anywhere, so `~/.hermes/.env` and `$HOME/.ssh/id_rsa` are
+ * both still caught.
+ */
+const SECRET_ARTEFACT =
+  /(?:\.env\b|\.ssh\b|\.aws\b|\.gnupg\b|\.kube\b|\.docker\/config|\.npmrc\b|\.netrc\b|\.pgpass\b|\.pypirc\b|\.git-credentials\b|id_rsa|id_ed25519|id_ecdsa|\/etc\/(?:passwd|shadow))/gi;
 
-/** Somewhere off this machine to put it. */
+/** An environment variable whose NAME says it holds a credential. */
+const CREDENTIAL_VAR =
+  /\$\{?[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\}?/g;
+
+/**
+ * A credential variable used to authenticate TO the destination.
+ *
+ * `-H "Authorization: token $GITHUB_TOKEN" https://api.github.com/user/repos`,
+ * `-H "X-Api-Key: $COMFY_CLOUD_API_KEY"`, `curl -u $LAMBDA_API_KEY:` and
+ * `...?api_key=${API_KEY}` are what a documented API call looks like. The
+ * variable is the key to the door being knocked on, not something carried out
+ * of the building. On a stock install this one shape was 25 of 30 criticals.
+ *
+ * The exclusion is for credential VARIABLES, and only in those positions:
+ * inside the destination URL, after a credential-named header, or as the
+ * argument to `curl -u`. A dotfile interpolated into a URL is still
+ * exfiltration and still fires, because `id_rsa` is not an authentication
+ * parameter.
+ *
+ * The cost, stated here rather than discovered later: a stolen token sent to an
+ * attacker's endpoint in an Authorization header looks exactly like this and is
+ * missed. Nothing in the text distinguishes them, and the alternative -- ruling
+ * that every documented API call is critical -- is the thing this replaces.
+ */
+const AUTH_PRECEDES = [
+  // Any header whose NAME says it carries a credential: Authorization,
+  // X-Api-Key, X-Shopify-Access-Token, Private-Token, apikey. Naming them one
+  // at a time is a list that is always one vendor short; naming the property
+  // they share is not.
+  /\b[A-Za-z0-9-]*?(?:key|token|auth|secret|credential)[A-Za-z0-9-]*\s*:\s*(?:bearer|basic|token)?\s*["']?\s*$/i,
+  // HTTP basic auth on the command line: `curl -u $LAMBDA_API_KEY: ...`
+  /(?:^|\s)(?:-u|--user)\s+["']?$/,
+];
+
+/**
+ * A credential variable being copied into another shell variable.
+ *
+ * `API_KEY="${USDA_API_KEY:-DEMO_KEY}"` moves a credential from one name to
+ * another. Nothing leaves the machine, and the later use of `$API_KEY` is
+ * judged on its own by the two tests above.
+ *
+ * The name must be uppercase and must start a word, so this is a shell
+ * assignment statement and not a query parameter or a form field:
+ * `curl -d "token=$SECRET" ...` and `curl -d "DATA=$API_KEY" ...` are both
+ * preceded by a quote rather than by whitespace, and both still fire.
+ */
+const ASSIGN_PRECEDES = /(?:^|\s)[A-Z][A-Z0-9_]*=["']?$/;
+
+/**
+ * How far apart the three signals may be and still be one instruction.
+ *
+ * Explicit, because the window used to be "one sentence" and `flow` below had
+ * quietly made a sentence as long as a paragraph. On a real skill file that
+ * paragraph was twenty lines of YAML frontmatter: a `curl` on one key, an
+ * "API key" on another and a URL on a third, none of them related, reported as
+ * one critical finding at line 1.
+ */
+const EXFIL_WINDOW = 240;
+
+/**
+ * Somewhere off this machine to put it.
+ *
+ * Loopback is excluded, the same way `unencrypted_transport` excludes it for
+ * MCP entries: `curl http://localhost:8644/health` crosses no network and
+ * cannot exfiltrate anything. The two rules disagreeing about what "off this
+ * machine" means was how a skill's own health check became a critical finding.
+ */
 const NETWORK_DEST =
-  /(?:https?:\/\/[^\s)\]"'<>]+|\bwebhook\b|\bendpoint\b|\bremote\s+server\b|\bmy\s+server\b|\battacker\b|\bexternal\s+(?:url|server|service|api)\b|\b[A-Za-z0-9-]+\.(?:com|net|org|io|dev|sh|xyz|ru|cn|co|me|app|site|link)\b(?:\/[^\s]*)?)/i;
+  /(?:https?:\/\/(?!(?:localhost|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|0\.0\.0\.0|\[?::1\]?)(?:[:\/]|$))[^\s)\]"'<>]+|\bwebhook\b|\bendpoint\b|\bremote\s+server\b|\bmy\s+server\b|\battacker\b|\bexternal\s+(?:url|server|service|api)\b|\b[A-Za-z0-9-]+\.(?:com|net|org|io|dev|sh|xyz|ru|cn|co|me|app|site|link)\b(?:\/[^\s]*)?)/i;
 
 /** Imperative verbs, for the HTML-comment rule. */
 const IMPERATIVE_VERB =
@@ -191,13 +310,20 @@ export function scanPromptFile(
     category: Category,
     severity: Severity,
     line: number,
-    evidence: string
+    evidence: string,
+    endLine?: number
   ) => {
-    out.push({ category, severity, surface: 'prompt', path: filePath, line, evidence });
+    const f: RawFinding = {
+      category, severity, surface: 'prompt', path: filePath, line, evidence,
+    };
+    if (endLine !== undefined && endLine !== line) f.endLine = endLine;
+    out.push(f);
   };
 
   // ── prompt_injection ─────────────────────────────────────────────────────
-  for (const re of DIRECTIVE_RE) {
+  // Override phrasing only. Concealment phrasing on visible prose is ordinary
+  // skill-writing, and it fires below only where the text is itself hidden.
+  for (const re of OVERRIDE_RE) {
     const rx = new RegExp(re.source, re.flags.indexOf('g') === -1 ? re.flags + 'g' : re.flags);
     eachMatch(rx, prose, (m) => {
       push('prompt_injection', 'high', lineAt(raw, m.index), m[0].trim());
@@ -205,7 +331,7 @@ export function scanPromptFile(
   }
 
   // The same patterns over fenced regions only, reported under the policy.
-  for (const re of DIRECTIVE_RE) {
+  for (const re of OVERRIDE_RE) {
     const rx = new RegExp(re.source, re.flags.indexOf('g') === -1 ? re.flags + 'g' : re.flags);
     eachMatch(rx, fenced, (m) => {
       const v = fenceVerdict(policy, 'prompt_injection', 'high');
@@ -220,7 +346,7 @@ export function scanPromptFile(
   // that turn on visibility. It does nothing at all to a homoglyph.
   const canon = canonicalWithMap(raw);
   const seenHidden: Record<string, true> = {};
-  for (const re of DIRECTIVE_RE) {
+  for (const re of ALL_DIRECTIVES) {
     const rx = new RegExp(re.source, re.flags.indexOf('g') === -1 ? re.flags + 'g' : re.flags);
     eachMatch(rx, canon.text, (m) => {
       const from = canon.map[m.index];
@@ -250,7 +376,7 @@ export function scanPromptFile(
   // single most likely thing such a page contains, and N3/N6 fail.
   eachMatch(/<!--([\s\S]*?)-->/g, raw, (m) => {
     const body = m[1];
-    const directive = firstMatch(DIRECTIVE_RE, body);
+    const directive = firstMatch(ALL_DIRECTIVES, body);
     const exfil = EXFIL_VERB.test(body) && NETWORK_DEST.test(body);
     const addressed = AGENT_REF.test(body) && IMPERATIVE_VERB.test(body);
     if (!(directive || exfil || addressed)) return;
@@ -288,35 +414,124 @@ export function scanPromptFile(
   }
 
   // ── exfiltration_instruction ─────────────────────────────────────────────
-  // Verb, local data and destination must co-occur inside one sentence. Any
-  // two of the three are ordinary technical writing.
+  // A verb, a sensitive source and a destination must co-occur inside one
+  // window. Any two of the three are ordinary technical writing.
   //
-  // A wrapped markdown paragraph is one sentence, not four. Single newlines
-  // become spaces first -- one character for one character, so every offset
-  // still points where it did. A full stop only ends a sentence when
-  // whitespace follows it, or the split lands inside `~/.env` and inside every
-  // hostname, which is exactly where verb and destination get separated.
-  const flow = (t: string) => t.replace(/([^\n])\n(?![ \t]*\n)/g, '$1 ');
+  // `flow` joins a wrapped paragraph into one line, so a sentence split across
+  // two lines is still one sentence. One character out for one character in, so
+  // every offset still points where it did.
+  //
+  // It joins a line to the next ONLY when the next line continues running
+  // prose. A line that opens a list item, a heading, a table row, a block
+  // quote, a fence or a YAML key starts something new. Joining those was how a
+  // scan of a stock skill file turned twenty lines of frontmatter into a single
+  // "sentence" and reported it as one critical finding at line 1.
+  //
+  // The test is positive rather than a blacklist of markers: after any indent
+  // and an optional opening quote, a continuation line starts with a letter or
+  // a digit, and is neither a YAML key nor a numbered item. A blacklist grows
+  // one character at a time, and the character it was missing was the tick in a
+  // checklist -- three unrelated lines of one, joined, put an "Email" on the
+  // first and a `.env` on the third inside the same window.
+  const CONTINUES =
+    /^[ \t]*(?![A-Za-z_][A-Za-z0-9_.-]*[ \t]*:(?=[ \t]|$)|\d+[.)][ \t])["'(]?[A-Za-z0-9]/;
+
+  // Inside a fence there is no wrapped paragraph. A newline in a shell script
+  // ends a statement, and joining across it put the `curl` from one line in the
+  // same window as the credential path from the next. The one join a shell does
+  // make is a trailing backslash, and that one is honoured, because a malicious
+  // multi-line `curl` must not fall between its own arguments.
+  const CONTINUES_CODE = /\\$/;
+
+  const flow = (t: string, code: boolean): string => {
+    const lines = t.split('\n');
+    let out = '';
+    for (let k = 0; k < lines.length; k++) {
+      out += lines[k];
+      if (k === lines.length - 1) continue;
+      const join = code
+        ? CONTINUES_CODE.test(lines[k])
+        : lines[k].length > 0 && CONTINUES.test(lines[k + 1]);
+      out += join ? ' ' : '\n';
+    }
+    return out;
+  };
+  // A full stop only ends a sentence when whitespace follows it, or the split
+  // lands inside `~/.env` and inside every hostname, which is exactly where
+  // verb and destination get separated.
   const SENTENCE = /(?:[^\n.!?]|[.!?](?!\s|$))+[.!?]?/g;
 
-  eachMatch(SENTENCE, flow(prose), (m) => {
-    const sent = m[0];
-    if (sent.trim().length < 12) return;
-    if (EXFIL_VERB.test(sent) && LOCAL_DATA.test(sent) && NETWORK_DEST.test(sent)) {
-      push('exfiltration_instruction', 'critical', lineAt(raw, m.index),
-           sent.trim().slice(0, 160));
-    }
-  });
+  const spansOf = (re: RegExp, s2: string): Range[] => {
+    const out2: Range[] = [];
+    eachMatch(re, s2, (m) => out2.push([m.index, m.index + m[0].length]));
+    return out2;
+  };
 
-  eachMatch(SENTENCE, flow(fenced), (m) => {
-    const sent = m[0];
-    if (sent.trim().length < 12) return;
-    if (EXFIL_VERB.test(sent) && LOCAL_DATA.test(sent) && NETWORK_DEST.test(sent)) {
-      const v = fenceVerdict(policy, 'exfiltration_instruction', 'critical');
-      push(v.category, v.severity, lineAt(raw, m.index),
-           'in fenced block: ' + sent.trim().slice(0, 160));
+  /**
+   * The narrowest span in which a verb, a sensitive source and a destination
+   * all occur, or null.
+   *
+   * It returns the span rather than a boolean so the finding can name the lines
+   * it actually covers. The old rule reported the line the containing sentence
+   * began on, which after `flow` was the line the containing paragraph began
+   * on, which sent every reader to the wrong place in the file.
+   */
+  const exfilSpan = (sent: string): Range | null => {
+    const verbs = spansOf(EXFIL_VERB, sent);
+    if (!verbs.length) return null;
+    const dests = spansOf(NETWORK_DEST, sent);
+    if (!dests.length) return null;
+
+    const sources: Range[] = spansOf(SECRET_ARTEFACT, sent);
+    for (const c of spansOf(CREDENTIAL_VAR, sent)) {
+      let auth = false;
+      for (const d of dests) if (c[0] >= d[0] && c[1] <= d[1]) auth = true;
+      if (auth) continue;
+      const before = sent.slice(Math.max(0, c[0] - 60), c[0]);
+      let auth2 = false;
+      for (const re of AUTH_PRECEDES) if (re.test(before)) auth2 = true;
+      if (auth2) continue;
+      if (ASSIGN_PRECEDES.test(before)) continue;
+      sources.push(c);
     }
-  });
+    if (!sources.length) return null;
+
+    let best: Range | null = null;
+    for (const v of verbs) {
+      for (const src of sources) {
+        for (const d of dests) {
+          const lo = Math.min(v[0], src[0], d[0]);
+          const hi = Math.max(v[1], src[1], d[1]);
+          if (hi - lo > EXFIL_WINDOW) continue;
+          if (!best || hi - lo < best[1] - best[0]) best = [lo, hi];
+        }
+      }
+    }
+    return best;
+  };
+
+  const scanExfil = (region: string, insideFence: boolean) => {
+    eachMatch(SENTENCE, flow(region, insideFence), (m) => {
+      const sent = m[0];
+      if (sent.trim().length < 12) return;
+      const span = exfilSpan(sent);
+      if (!span) return;
+      const from = m.index + span[0];
+      const to = m.index + span[1];
+      const text = raw.slice(from, to).replace(/\s+/g, ' ').trim().slice(0, 160);
+      const line = lineAt(raw, from);
+      const endLine = lineAt(raw, Math.max(from, to - 1));
+      if (insideFence) {
+        const v = fenceVerdict(policy, 'exfiltration_instruction', 'critical');
+        push(v.category, v.severity, line, 'in fenced block: ' + text, endLine);
+      } else {
+        push('exfiltration_instruction', 'critical', line, text, endLine);
+      }
+    });
+  };
+
+  scanExfil(prose, false);
+  scanExfil(fenced, true);
 
   // ── credential_leak (whole file) ─────────────────────────────────────────
   // A live key inside a fence is still a live key.

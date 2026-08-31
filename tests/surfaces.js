@@ -158,6 +158,39 @@ const NEGATIVE = [
     check: (r) => !r.findings.some((x) => x.category === 'credential_leak') },
 ];
 
+/**
+ * Three real bundled skill files, verbatim, under both policies.
+ *
+ * Every other negative here is short, hand-written, and has its payload on one
+ * line. That suite was 61 for 61 green while the scanner produced 1508
+ * critical findings on an ordinary Hermes install, because none of these
+ * fixtures is long enough, structured enough, or fenced enough to reach the
+ * rules that were wrong. Length is the property being tested.
+ *
+ * See `fixtures/surfaces/real/README.md` for provenance and licence. Both
+ * policies, because `strict` is what the Hermes adapter passes and it is the
+ * policy under which fenced content is scanned at full severity, which is
+ * where all but two of the false criticals lived.
+ */
+const REAL = [
+  ['R1', 'real/R1_fitness_nutrition.SKILL.md', 'fenced shell block scanned as prose'],
+  ['R2', 'real/R2_github_repo_management.SKILL.md', '22 identical copies, and 25 documented API calls'],
+  ['R3', 'real/R3_google_workspace.SKILL.md', 'YAML frontmatter joined into one sentence'],
+];
+
+for (const [id, fixture, why] of REAL) {
+  for (const policy of ['balanced', 'strict']) {
+    NEGATIVE.push({
+      id: id + (policy === 'strict' ? 's' : 'b'),
+      fixture,
+      kind: 'prompt',
+      policy,
+      rule: 'stock Hermes skill file: zero critical, zero high (' + why + ')',
+      check: (r) => r.counts.critical === 0 && r.counts.high === 0,
+    });
+  }
+}
+
 async function scanCase(c) {
   const inv = c.kind === 'prompt' ? promptInv([c.fixture]) : jsonInv(c.fixture);
   const opts = Object.assign({}, OPTS);
@@ -383,6 +416,41 @@ function declaredPaths(c) {
   // Counting what did fire is not coverage of what could. Passing on a count
   // while two rules were unverified is the same shape as CI reporting green
   // while running no tests.
+  // ---- fence extent: a structural check, not a fixture -------------------
+  //
+  // No fixture failed when the fence terminator regressed, because the other
+  // narrowings kept the real files clean either way. The defect is still real
+  // and still worth a guard, so it gets asserted directly: a fence must mask
+  // every line of its body, not its opening line and one line more.
+  //
+  // The content is deliberately inert. A fixture that would exercise this
+  // through the exfiltration rule has to carry a working payload, and writing
+  // one is blocked on this machine by the guard's own D3 rule.
+  {
+    const { codeRanges, maskCode } = require('../dist/surfaces/text');
+    const src = [
+      'intro', '', '```bash', 'one', 'two', 'three', 'four', '```', '', 'after',
+    ].join('\n');
+    const masked = maskCode(src);
+    const lines = masked.split('\n');
+    const bodyBlank = lines.slice(2, 8).every((l) => /^\s*$/.test(l));
+    const proseKept = lines[0] === 'intro' && lines[9] === 'after';
+    // An unclosed fence must run to end of file rather than stopping at the
+    // first line end, which is what the `$` alternative used to do.
+    const openLines = maskCode(['a', '', '```js', 'x', 'y', 'z'].join('\n')).split('\n');
+    const openBlank = openLines.slice(2).every((l) => /^\s*$/.test(l));
+    if (bodyBlank && proseKept && openBlank && codeRanges(src).length >= 1) {
+      pass++;
+      console.log('  ok    FENCE  a fence masks its whole body, closed or not');
+    } else {
+      fail++;
+      failures.push('FENCE');
+      console.log('  FAIL  FENCE  fence masked ' +
+        lines.slice(2, 8).filter((l) => /^\s*$/.test(l)).length + '/6 body lines, ' +
+        'unclosed masked ' + openLines.slice(2).filter((l) => /^\s*$/.test(l)).length + '/4');
+    }
+  }
+
   const emitted = {};
   for (const c of POSITIVE) {
     const r = await scanCase(c);
