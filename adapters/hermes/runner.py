@@ -164,17 +164,34 @@ def baseline_ids(home: Optional[Path] = None) -> set:
 
 
 def has_baseline(home: Optional[Path] = None) -> bool:
-    """True once a scan has actually recorded a baseline.
+    """True once a TRUSTWORTHY scan has recorded a baseline.
 
-    The presence of the file is deliberately NOT the test. The scanner-missing
-    notice writes its one-shot mark into this same document before any scan has
-    ever run, and a file-existence test would then make the first successful
-    scan look like a second run: nothing would be baselined and the first-run
-    notice would never fire. The `ids` key is written only by a completed scan,
-    so it is the honest signal.
+    Two things are deliberately not the test.
+
+    The presence of the file is not enough: the scanner-missing notice writes
+    its one-shot mark into this same document before any scan has ever run, and
+    a file-existence test would make the first successful scan look like a
+    second run -- nothing would be baselined and the first-run notice would
+    never fire. The `ids` key is written only by a completed scan.
+
+    And a completed scan is not enough either. A baseline is a claim about what
+    was already present, and an engine we refuse to report findings from cannot
+    be trusted to make that claim. 1.3.1 returned 1602 critical findings on a
+    stock machine where 1.4.0 returns none; a baseline built from that is 1602
+    assertions that garbage is normal. So the engine that wrote it is recorded
+    and checked here, and a baseline written below the floor counts as absent.
+
+    A MISSING `engine_version` also counts as absent. Every baseline written
+    before this field existed was written by an engine at or below 1.3.1 or by
+    1.4.0 in the hours before this shipped, and nothing on disk distinguishes
+    them. That forces exactly one re-baseline per installation, announced by
+    the ordinary first-run notice with the sanity gate on it. Taken
+    deliberately: it is free now and it stops being free later.
     """
     doc = _read_json(_baseline_path(home))
-    return isinstance(doc, dict) and "ids" in doc
+    if not isinstance(doc, dict) or "ids" not in doc:
+        return False
+    return not engine_below_floor(doc.get("engine_version"))
 
 
 def take_first_run_notice(home: Optional[Path] = None) -> Optional[Dict[str, int]]:
@@ -590,6 +607,10 @@ def run_scan(home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
         doc.update(
             {
                 "created_at": cache["scanned_at"],
+                # Which engine's judgement this baseline encodes. Read back by
+                # has_baseline: a baseline is only as trustworthy as the thing
+                # that decided what "already present" means.
+                "engine_version": cache.get("engine_version"),
                 "digest": digest,
                 "ids": ids,
                 # The agent is told ONCE that this happened. Without it, a user

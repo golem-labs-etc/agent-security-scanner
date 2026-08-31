@@ -1129,6 +1129,110 @@ def run_all(tmp: Path, scanner) -> int:
         f"{len(fat_out.encode('utf-8'))} bytes",
     )
 
+    # ---- V21: a baseline is only as trustworthy as the engine that wrote it
+    #
+    # 1.3.1 returned 1602 critical findings on a stock machine where 1.4.0
+    # returns none. A baseline built from that is 1602 assertions that garbage
+    # is normal, and it was being honoured forever. Inert today only because
+    # the 1.4.0 fingerprint change orphaned every id -- luck, not design.
+    print()
+    print("V21 a baseline written by an engine we refuse is not a baseline")
+
+    trust = tmp / "v21"
+    # Hostile, not clean: the first-run notice only fires when the baseline
+    # actually suppressed something from the agent feed, so a clean tree would
+    # make V21d pass or fail for a reason that has nothing to do with trust.
+    make_hostile_tree(trust)
+    use_home(trust)
+    hooks.reset_for_tests()
+    saved_bin = runner.SCANNER_BIN
+    runner.SCANNER_BIN = str(report_stub("v21-old", "1.3.1", criticals=3))
+    try:
+        runner.run_scan(trust)
+        doc = json.loads((trust / ".glance" / "baseline.json").read_text())
+        check(
+            "V21a the engine is recorded in the baseline",
+            doc.get("engine_version") == "1.3.1" and "ids" in doc,
+            f"engine_version={doc.get('engine_version')}, {len(doc['ids'])} ids",
+        )
+        check(
+            "V21b a baseline from a below-floor engine counts as absent",
+            not runner.has_baseline(trust),
+            "has_baseline is False despite a complete document on disk",
+        )
+    finally:
+        runner.SCANNER_BIN = saved_bin
+
+    if not scanner:
+        check("V21c", False, "scanner not on PATH")
+        check("V21d", False, "scanner not on PATH")
+        check("V21e", False, "scanner not on PATH")
+    else:
+        # Upgrade. The next trustworthy scan is the first run, because it is
+        # the first trustworthy look.
+        runner.reset_for_tests()
+        use_home(trust)
+        hooks.reset_for_tests()
+        runner.run_scan(trust)
+        doc2 = json.loads((trust / ".glance" / "baseline.json").read_text())
+        check(
+            "V21c the current engine re-baselines and is honoured",
+            runner.has_baseline(trust)
+            and doc2.get("engine_version") == (runner.get_cached(trust) or {}).get("engine_version")
+            and not runner.engine_below_floor(doc2.get("engine_version")),
+            f"engine_version={doc2.get('engine_version')}",
+        )
+        # The re-baseline is announced like any other first run, so nobody has
+        # findings silently re-filed underneath them.
+        out = hooks.pre_llm_call(session_id="v21c")
+        check(
+            "V21d the first-run notice fires on the re-baseline",
+            bool(out) and "first scan on this machine" in (out or {}).get("context", ""),
+            (out or {}).get("context", "(none)").splitlines()[0],
+        )
+
+    # And the sanity gate is on that path: a re-baseline is a first run, so an
+    # implausible count is called implausible rather than filed quietly.
+    gate = tmp / "v21-gate"
+    make_clean_tree(gate)
+    use_home(gate)
+    hooks.reset_for_tests()
+    saved_bin = runner.SCANNER_BIN
+    big = runner.IMPLAUSIBLE_CRITICAL + 1
+    try:
+        runner.SCANNER_BIN = str(report_stub("v21-stale", "1.3.1", criticals=2))
+        runner.run_scan(gate)                       # untrusted baseline
+        runner.SCANNER_BIN = str(report_stub("v21-flood", runner.MIN_ENGINE, criticals=big))
+        runner.reset_for_tests()
+        use_home(gate)
+        hooks.reset_for_tests()
+        runner.run_scan(gate)                       # the re-baseline
+        said = (hooks.pre_llm_call(session_id="v21e") or {}).get("context", "")
+        check(
+            "V21e the sanity gate is on the re-baseline path",
+            "not a plausible number" in said and str(big) in said,
+            f"{big} critical on a re-baseline is still called implausible",
+        )
+    finally:
+        runner.SCANNER_BIN = saved_bin
+
+    # A baseline from before this field existed cannot be told apart from one
+    # written by 1.3.1, so it is treated the same. One forced re-baseline per
+    # installation, taken deliberately.
+    legacy = tmp / "v21-legacy"
+    make_clean_tree(legacy)
+    use_home(legacy)
+    (legacy / ".glance").mkdir(parents=True, exist_ok=True)
+    (legacy / ".glance" / "baseline.json").write_text(
+        json.dumps({"created_at": "x", "digest": "d", "ids": ["aaaaaaaa"]}),
+        encoding="utf-8",
+    )
+    check(
+        "V21f a baseline with no recorded engine counts as absent",
+        not runner.has_baseline(legacy),
+        "unknown provenance is not trusted provenance",
+    )
+
     # ---- V10: first-run baselining is visible, not silent ----------------
     #
     # Baselining on first run is right for the agent and wrong for the human.
