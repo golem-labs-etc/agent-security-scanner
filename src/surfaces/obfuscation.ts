@@ -55,12 +55,26 @@ const ZW_BETWEEN_LETTERS = /[A-Za-z][​‌‍﻿][A-Za-z]/g;
  */
 const BIDI_CONTROLS = /[‪-‮⁦-⁩]/g;
 
-/** Cyrillic and Greek letter blocks, for the mixed-script signal. */
-function isCyrillicOrGreek(ch: string): boolean {
+/**
+ * Cyrillic letter blocks, for the mixed-script signal.
+ *
+ * Greek was in here and came out. The two scripts are not symmetric and the
+ * original specification treating them as one was wrong. A Cyrillic letter
+ * inside an otherwise Latin word has no innocent explanation: no keyboard
+ * produces it and no notation calls for it. Greek letters inside Latin words
+ * are ordinary technical notation -- every one of the Greek hits on a real
+ * machine was a finance document writing `\u0394AR`, `\u0394Inventory`,
+ * `\u0394Common Stock`, or a Greek letter in a formula.
+ *
+ * Greek stays in `CONFUSABLES`, which the `hidden_instruction` reveal test
+ * folds through. That test additionally requires a directive phrase to appear
+ * once the folding is undone, so a Greek letter in a formula cannot reach it.
+ * This signal has no such second condition, which is exactly why it needs the
+ * narrower alphabet.
+ */
+function isCyrillic(ch: string): boolean {
   const c = ch.charCodeAt(0);
   return (
-    (c >= 0x0370 && c <= 0x03ff) || // Greek and Coptic
-    (c >= 0x1f00 && c <= 0x1fff) || // Greek Extended
     (c >= 0x0400 && c <= 0x04ff) || // Cyrillic
     (c >= 0x0500 && c <= 0x052f)    // Cyrillic Supplement
   );
@@ -71,7 +85,7 @@ function isAsciiLetter(ch: string): boolean {
 }
 
 /**
- * Signal 2: a Cyrillic or Greek character inside an otherwise Latin word.
+ * Signal 2: a Cyrillic character inside an otherwise Latin word.
  *
  * A whole Russian sentence has words that are entirely Cyrillic, so its Latin
  * count is zero and nothing fires. What fires is `Ignоre` -- five Latin
@@ -93,7 +107,7 @@ function mixedScriptWords(text: string): ObfuscationHit[] {
       let foreign = 0;
       for (const ch of word) {
         if (isAsciiLetter(ch)) latin++;
-        else if (isCyrillicOrGreek(ch)) foreign++;
+        else if (isCyrillic(ch)) foreign++;
       }
       if (foreign >= 1 && latin >= 2 && latin > foreign) {
         out.push({
@@ -101,7 +115,7 @@ function mixedScriptWords(text: string): ObfuscationHit[] {
           line: lineAt(text, start),
           evidence:
             'mixed-script word: ' + latin + ' latin, ' + foreign +
-            ' cyrillic/greek, length ' + word.length,
+            ' cyrillic, length ' + word.length,
         });
       }
     }
@@ -110,7 +124,7 @@ function mixedScriptWords(text: string): ObfuscationHit[] {
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
-    const isWordChar = isAsciiLetter(ch) || isCyrillicOrGreek(ch);
+    const isWordChar = isAsciiLetter(ch) || isCyrillic(ch);
     if (isWordChar) {
       if (start < 0) start = i;
     } else {

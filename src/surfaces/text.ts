@@ -135,8 +135,16 @@ export function codeRanges(src: string): Range[] {
 
   // Fenced blocks: ``` or ~~~ , optional info string, to the closing fence or
   // to end of file if the author never closed it.
+  //
+  // The terminator is `(?![\s\S])` -- a position with nothing after it -- and
+  // NOT a bare `$`. Under the `m` flag `$` matches at the end of every LINE, so
+  // the lazy body stopped at the first newline and a fence masked its opening
+  // line plus one line of body and no more. Everything past that was scanned as
+  // prose. On a real skill file that is most of every fenced block: the shell
+  // snippet a skill documents came back as `exfiltration_instruction/critical`
+  // under both policies, because the downgrade path never saw it as fenced.
   work = work.replace(
-    /^([ \t]*)(`{3,}|~{3,})[^\n]*\n([\s\S]*?)(^[ \t]*\2[^\n]*$|$)/gm,
+    /^([ \t]*)(`{3,}|~{3,})[^\n]*\n([\s\S]*?)(^[ \t]*\2[^\n]*$|(?![\s\S]))/gm,
     (m: string, ...rest: any[]) => {
       const off = rest[rest.length - 2] as number;
       ranges.push([off, off + m.length]);

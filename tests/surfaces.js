@@ -86,6 +86,42 @@ const POSITIVE = [
     want: { category: 'hidden_instruction', severity: 'critical' } },
   { id: 'P16b', fixture: 'P16_concealed_in_fenced_comment.md', kind: 'prompt', policy: 'strict',
     want: { category: 'hidden_instruction', severity: 'critical' } },
+
+  // The two categories that had no positive fixture until now. Both are
+  // agent-facing severities, so both were shipping with no evidence they
+  // detect anything. See the coverage check at the end of this file.
+  { id: 'P17', fixture: 'P17_shell_metachar.json', kind: 'inventory',
+    want: { category: 'command_injection_risk', severity: 'high' } },
+  { id: 'P18', fixture: 'P18_literal_credential.md', kind: 'prompt',
+    want: { category: 'credential_leak', severity: 'critical' } },
+
+  // A third with no positive fixture, found only once negative fixtures
+  // stopped counting toward coverage. It fired in N1 as a side effect of that
+  // fixture using `npx -y`, which is not the same as anything asserting it
+  // works. info severity, so it never reaches an agent, but the gap was the
+  // same gap.
+  { id: 'P19', fixture: 'P19_unpinned_uvx.json', kind: 'inventory',
+    want: { category: 'unpinned_remote_exec', severity: 'info' } },
+
+  // P20 closes the gap the changelog has been carrying since the real-machine
+  // scan: no positive fixture reached the fenced exfiltration path, and every
+  // other positive here puts its payload on ONE line.
+  //
+  // This one is a real shape. The `curl` is inside a fence, spans four lines
+  // with backslash continuations, and the source and destination are on
+  // different lines: line 20 names the credentials file, line 21 is the host.
+  // It therefore exercises the fence range, the continuation join, and the
+  // sensitive-source requirement at once -- the three things that were each
+  // wrong in a different way on the first real scan.
+  //
+  // Both policies, because the DIFFERENCE is the assertion. Balanced downgrades
+  // it to a medium `fenced_directive`; strict reports it as written. A single
+  // policy here would pass while the downgrade was broken, which is exactly
+  // what happened.
+  { id: 'P20a', fixture: 'P20_fenced_multiline_exfil.md', kind: 'prompt', policy: 'balanced',
+    want: { category: 'fenced_directive', severity: 'medium' } },
+  { id: 'P20b', fixture: 'P20_fenced_multiline_exfil.md', kind: 'prompt', policy: 'strict',
+    want: { category: 'exfiltration_instruction', severity: 'critical' } },
 ];
 
 const NEGATIVE = [
@@ -126,7 +162,81 @@ const NEGATIVE = [
   { id: 'N12', fixture: 'N1_typical.json', kind: 'inventory', policy: 'strict',
     rule: 'clean machine under strict, still zero high',
     check: (r) => r.counts.high === 0 && r.counts.critical === 0 },
+
+  // Pins an asymmetry found while writing P18, so it is a decision on record
+  // rather than an accident nobody noticed. `secret_in_config` runs values
+  // through `secretShape`, which includes a generic high-entropy fallback.
+  // `credential_leak` runs free text through `findSecretsInText`, which
+  // applies the vendor prefixes ONLY. So a 39-character high-entropy token in
+  // prose does not fire, while the same value in an MCP env var does.
+  //
+  // Defensible: prose is full of hashes, UUIDs and base64 blobs, and an
+  // entropy rule there would be noise. Undocumented until now, and it is why
+  // the first P18 fixture written for this gap fired nothing at all.
+  { id: 'N13', fixture: 'N13_high_entropy_prose.md', kind: 'prompt', policy: 'strict',
+    rule: 'high-entropy token in prose is not a credential_leak (vendor shapes only)',
+    check: (r) => !r.findings.some((x) => x.category === 'credential_leak') },
+
+  // N14 is P20 with the one ingredient that matters removed.
+  //
+  // Same shape: fenced, multi-line, backslash-continued `curl`, one of them a
+  // POST with a body, both to hosts this scanner has never heard of. The only
+  // difference is that nothing sensitive is being sent. If it fires, the rule
+  // is matching EGRESS rather than EXFILTRATION, which is what it did on the
+  // first real scan: `curl` to a public food API and a POST to a shop admin
+  // endpoint both came back critical.
+  //
+  // Documented network calls are what agent skills are made of. A rule that
+  // fires on them fires on almost every skill in a real install, so this pair
+  // is the boundary, and P20 is worth nothing without it.
+  //
+  // Measured, by removing the source requirement and rerunning: only the
+  // STRICT half fails. Under balanced the fence downgrade turns both calls
+  // into mediums, so `no critical, no high` stays true even with the rule
+  // broken. N14 alone would be a test that cannot fail for the reason it was
+  // written. It is kept because it pins the balanced path against a future
+  // change to the downgrade, but N14s is the one with teeth.
+  { id: 'N14', fixture: 'N14_documented_api_call.md', kind: 'prompt',
+    rule: 'documented API calls with no sensitive source are not exfiltration',
+    check: (r) => r.counts.critical === 0 && r.counts.high === 0
+      && !r.findings.some((x) => x.category === 'exfiltration_instruction') },
+  { id: 'N14s', fixture: 'N14_documented_api_call.md', kind: 'prompt', policy: 'strict',
+    rule: 'and still not, under strict',
+    check: (r) => r.counts.critical === 0 && r.counts.high === 0 },
 ];
+
+/**
+ * Three real bundled skill files, verbatim, under both policies.
+ *
+ * Every other negative here is short, hand-written, and has its payload on one
+ * line. That suite was 61 for 61 green while the scanner produced 1508
+ * critical findings on an ordinary Hermes install, because none of these
+ * fixtures is long enough, structured enough, or fenced enough to reach the
+ * rules that were wrong. Length is the property being tested.
+ *
+ * See `fixtures/surfaces/real/README.md` for provenance and licence. Both
+ * policies, because `strict` is what the Hermes adapter passes and it is the
+ * policy under which fenced content is scanned at full severity, which is
+ * where all but two of the false criticals lived.
+ */
+const REAL = [
+  ['R1', 'real/R1_fitness_nutrition.SKILL.md', 'fenced shell block scanned as prose'],
+  ['R2', 'real/R2_github_repo_management.SKILL.md', '22 identical copies, and 25 documented API calls'],
+  ['R3', 'real/R3_google_workspace.SKILL.md', 'YAML frontmatter joined into one sentence'],
+];
+
+for (const [id, fixture, why] of REAL) {
+  for (const policy of ['balanced', 'strict']) {
+    NEGATIVE.push({
+      id: id + (policy === 'strict' ? 's' : 'b'),
+      fixture,
+      kind: 'prompt',
+      policy,
+      rule: 'stock Hermes skill file: zero critical, zero high (' + why + ')',
+      check: (r) => r.counts.critical === 0 && r.counts.high === 0,
+    });
+  }
+}
 
 async function scanCase(c) {
   const inv = c.kind === 'prompt' ? promptInv([c.fixture]) : jsonInv(c.fixture);
@@ -337,25 +447,96 @@ function declaredPaths(c) {
     console.log('  FAIL  fingerprints differ between identical runs');
   }
 
-  // Part B's dashboard colour map must be exhaustive over the categories this
-  // engine emits. Assert the exported list covers everything actually produced,
-  // so adding a rule without adding a colour fails here rather than there.
+  // Category coverage, in BOTH directions.
+  //
+  //   1. every category the engine emits is declared in CATEGORIES, so the
+  //      dashboard colour map cannot miss one;
+  //   2. every declared category is emitted by at least one positive fixture.
+  //
+  // Direction 2 is the one that matters and it is the one this check did not
+  // have. It reported "10 declared, 8 exercised, 0 uncovered" and passed. That
+  // sentence was true and told you nothing: `command_injection_risk` (high)
+  // and `credential_leak` (critical) had never been observed to fire, and both
+  // are severities the Hermes adapter puts in front of an agent. A rule with
+  // no positive fixture is a rule shipping on the claim that it works.
+  //
+  // Counting what did fire is not coverage of what could. Passing on a count
+  // while two rules were unverified is the same shape as CI reporting green
+  // while running no tests.
+  // ---- fence extent: a structural check, not a fixture -------------------
+  //
+  // No fixture failed when the fence terminator regressed, because the other
+  // narrowings kept the real files clean either way. The defect is still real
+  // and still worth a guard, so it gets asserted directly: a fence must mask
+  // every line of its body, not its opening line and one line more.
+  //
+  // The content is deliberately inert. A fixture that would exercise this
+  // through the exfiltration rule has to carry a working payload, and writing
+  // one is blocked on this machine by the guard's own D3 rule.
+  {
+    const { codeRanges, maskCode } = require('../dist/surfaces/text');
+    const src = [
+      'intro', '', '```bash', 'one', 'two', 'three', 'four', '```', '', 'after',
+    ].join('\n');
+    const masked = maskCode(src);
+    const lines = masked.split('\n');
+    const bodyBlank = lines.slice(2, 8).every((l) => /^\s*$/.test(l));
+    const proseKept = lines[0] === 'intro' && lines[9] === 'after';
+    // An unclosed fence must run to end of file rather than stopping at the
+    // first line end, which is what the `$` alternative used to do.
+    const openLines = maskCode(['a', '', '```js', 'x', 'y', 'z'].join('\n')).split('\n');
+    const openBlank = openLines.slice(2).every((l) => /^\s*$/.test(l));
+    if (bodyBlank && proseKept && openBlank && codeRanges(src).length >= 1) {
+      pass++;
+      console.log('  ok    FENCE  a fence masks its whole body, closed or not');
+    } else {
+      fail++;
+      failures.push('FENCE');
+      console.log('  FAIL  FENCE  fence masked ' +
+        lines.slice(2, 8).filter((l) => /^\s*$/.test(l)).length + '/6 body lines, ' +
+        'unclosed masked ' + openLines.slice(2).filter((l) => /^\s*$/.test(l)).length + '/4');
+    }
+  }
+
   const emitted = {};
-  for (const c of POSITIVE.concat(NEGATIVE)) {
+  for (const c of POSITIVE) {
     const r = await scanCase(c);
     for (const x of r.findings) emitted[x.category] = true;
   }
-  const uncovered = Object.keys(emitted).filter((k) => CATEGORIES.indexOf(k) === -1);
-  if (CATEGORIES.length === 10 && uncovered.length === 0) {
+  const negativeOnly = {};
+  for (const c of NEGATIVE) {
+    const r = await scanCase(c);
+    for (const x of r.findings) negativeOnly[x.category] = true;
+  }
+
+  // Declared but never produced by a positive fixture. A category that only
+  // ever appears incidentally in a negative fixture does not count: negative
+  // fixtures assert what must NOT fire, so a category riding along in one is
+  // not evidence that anything detects it on purpose.
+  const unexercised = CATEGORIES.filter((k) => !emitted[k]);
+
+  // Produced but not declared. This is what the old check tested.
+  const undeclared = Object.keys(emitted)
+    .concat(Object.keys(negativeOnly))
+    .filter((k) => CATEGORIES.indexOf(k) === -1);
+
+  if (unexercised.length === 0 && undeclared.length === 0) {
     pass++;
-    console.log('  ok    CATEGORIES exhaustive: ' + CATEGORIES.length +
-                ' declared, ' + Object.keys(emitted).length +
-                ' exercised, 0 uncovered');
+    console.log('  ok    CATEGORIES coverage: ' + CATEGORIES.length +
+                ' declared, all ' + CATEGORIES.length +
+                ' emitted by a positive fixture, 0 undeclared');
   } else {
     fail++;
-    failures.push('categories-exhaustive');
-    console.log('  FAIL  CATEGORIES: ' + CATEGORIES.length + ' declared, uncovered: ' +
-                (uncovered.join(', ') || 'none'));
+    failures.push('categories-coverage');
+    if (unexercised.length) {
+      console.log('  FAIL  CATEGORIES: no positive fixture ever emits: ' +
+                  unexercised.join(', ') +
+                  '  (a rule with no fixture has no evidence it detects anything)');
+    }
+    if (undeclared.length) {
+      console.log('  FAIL  CATEGORIES: emitted but not declared: ' +
+                  undeclared.join(', '));
+    }
   }
 
   console.log('');

@@ -112,9 +112,14 @@ export async function scanSurfaces(
     }
   }
 
+  // Content key per prompt file. The same skill copied into every profile is
+  // the same file, and its findings are the same findings.
+  const contentKey: Record<string, string> = {};
+
   for (const p of prompts) {
     try {
       const text = fs.readFileSync(p.path, 'utf8');
+      contentKey[p.path] = crypto.createHash('sha256').update(text).digest('hex');
       raws.push(...scanPromptFile(p.path, text, policy));
     } catch (e) {
       // Unreadable file: not a finding, and not fatal.
@@ -122,14 +127,17 @@ export async function scanSurfaces(
   }
 
   const findings: Finding[] = raws.map((r) => {
+    const key = r.surface === 'prompt' ? contentKey[r.path] : undefined;
     const f: Finding = {
-      id: fingerprint(r.category, r.path, r.line, r.evidence),
+      // Prompt findings key on content, not path: see `Finding.id`.
+      id: fingerprint(r.category, key ? 'content:' + key : r.path, r.line, r.evidence),
       category: r.category,
       severity: r.severity,
       surface: r.surface,
       path: r.path,
     };
     if (r.line !== undefined) f.line = r.line;
+    if (r.endLine !== undefined && r.endLine !== r.line) f.end_line = r.endLine;
     if (opts.evidence) f.evidence = r.evidence;
     return f;
   });
@@ -160,13 +168,34 @@ export async function scanSurfaces(
     }
   }
 
-  // Dedupe on the fingerprint: the same finding reached twice is one finding.
-  const seen: Record<string, true> = {};
-  const unique = findings.filter((f) => {
-    if (seen[f.id]) return false;
-    seen[f.id] = true;
-    return true;
-  });
+  // Dedupe on the fingerprint, and keep the locations.
+  //
+  // The same finding reached twice is one finding, and because a prompt
+  // finding's id is keyed on file content rather than on path, "twice" now
+  // includes the same skill file copied into twenty-two profiles. Dropping the
+  // duplicates silently would hide where the problem actually lives, so the
+  // extra locations are reported on the finding instead: one problem, every
+  // address it has.
+  const byId: Record<string, Finding> = {};
+  const locations: Record<string, string[]> = {};
+  const unique: Finding[] = [];
+  for (const f of findings) {
+    if (!byId[f.id]) {
+      byId[f.id] = f;
+      locations[f.id] = [f.path];
+      unique.push(f);
+    } else if (locations[f.id].indexOf(f.path) === -1) {
+      locations[f.id].push(f.path);
+    }
+  }
+  for (const f of unique) {
+    const paths = locations[f.id].slice().sort();
+    if (paths.length > 1) {
+      f.path = paths[0];
+      f.occurrences = paths.length;
+      f.also_in = paths.slice(1);
+    }
+  }
 
   unique.sort((a, b) => {
     const d =

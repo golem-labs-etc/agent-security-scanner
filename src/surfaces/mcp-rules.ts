@@ -17,14 +17,16 @@ export interface RawFinding {
   surface: 'mcp' | 'prompt';
   path: string;
   line?: number;
+  /** Last line of the match, when a rule's window is wider than one line. */
+  endLine?: number;
   evidence: string;
 }
 
 /**
  * Hosts that never leave the machine, so plain HTTP to them crosses no
  * network. Checked against the parsed hostname, never a substring of the URL:
- * `http://localhost.evil.com/` must not pass, and it does not, because its
- * hostname is `localhost.evil.com`.
+ * `http://localhost.evil.invalid/` must not pass, and it does not, because its
+ * hostname is `localhost.evil.invalid`.
  */
 function isLoopback(host: string): boolean {
   const h = host.toLowerCase().replace(/^\[|\]$/g, '');
