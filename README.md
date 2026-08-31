@@ -8,8 +8,10 @@ Part of [Glance](https://glance-scanner.vercel.app). This package is the half
 that reads code at rest. The half that watches a running agent, Glance guard,
 is in early access and is not in this package.
 
-MIT licensed. Runs locally. Nothing is uploaded unless you turn on AI analysis,
-and then only to the provider whose key you supply.
+MIT licensed. Runs locally; the only data that leaves your machine is the
+dependency list npm audit checks against npm's advisory database. Turn on AI
+analysis and your code also goes to the provider whose key you supply, and
+only to them.
 
 ## Try it in one line
 

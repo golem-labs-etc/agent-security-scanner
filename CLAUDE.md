@@ -2,8 +2,8 @@
 
 **This repo is PUBLIC and MIT licensed.** Everything committed here is world
 readable, permanently, including anything later deleted, because the history is
-public too. Three separate leaks of private material have happened through this
-repo. Read the boundary below before committing.
+public too. Private material has reached this repo before. Read the boundary
+below before committing.
 
 ## The three-repo structure (settled 27 Aug 2026)
 
@@ -13,9 +13,8 @@ repo. Read the boundary below before committing.
 | `glance-guard` | **private**, UNLICENSED | Glance guard: detectors, judge, hook adapter |
 | `glance-site` | **private** | marketing site, build system, `api/` endpoints |
 
-They are separate repos on purpose. Until today all three lived in this one, with
-two working copies pointing at the same remote, and that is what caused every
-leak. Do not recombine them.
+They are separate repos on purpose, and the reasons are recorded in the private
+`COORDINATION.md`. Do not recombine them.
 
 ## What belongs here
 
@@ -52,18 +51,18 @@ test an adapter is how the corpus leaks.
   It belongs in `glance-guard`. If you find it in this working copy, it is a
   leftover, not the source of truth. `~/glance-guard` is.
 - **Glance fixes source.** Same rule.
-- **Internal documents.** `GLANCE-GUARD-SPEC.md`, `GUARDIAN-MVP.md`,
-  `BRAND_SPEC.md`, `HANDOFF-TO-CLAUDE-CODE.md`, `golem-*.md`,
-  `mvp-technical-architecture.md`, `glance-market-read.md`,
-  `glance-blue-ocean.md`. The spec carries the full adversarial A-corpus, which
-  doubles as the list of attack shapes to avoid. Guard source being private is a
-  business decision; the corpus being private is a security one.
-- **The site.** `public/`, `data/`, `api/`, `partials/`, `vercel.json`,
-  `src/build.js`, `src/shell.js`, `src/provenance.js`, `src/home.*`,
-  `src/pro.html`, `src/brand.css`, `src/scan-demo.svg`.
-- **Diagnostic HTTP endpoints.** `api/debug-*.js` were live and unauthenticated
-  in production; one accepted an arbitrary `?to=` and sent mail from the Golem
-  inbox. Never ship a debug endpoint to a deployed site.
+- **Internal documents**, listed in the private `COORDINATION.md`. Specs,
+  handoffs and strategy notes. One of them carries the guard's full adversarial
+  corpus, which doubles as a list of attack shapes; guard source being private
+  is a business decision, the corpus being private is a security one. The names
+  are not repeated here because an enumerated list of private filenames is
+  itself a map.
+- **The site.** Marketing pages, its build system and its HTTP endpoints all
+  live in `glance-site`. Its file layout is recorded there and in the private
+  `COORDINATION.md`, not here.
+- **Diagnostic HTTP endpoints.** Never ship one to a deployed site, in any
+  repo. The incident that produced this rule is written up in the private
+  `COORDINATION.md`.
 - **Build output.** `dist/` is gitignored.
 
 A `pre-push` hook blocks most of this. If it fires, the hook is right.
@@ -88,14 +87,18 @@ git status --porcelain | grep '^??'          # would a squash sweep these in?
 git ls-files | grep -iE 'guard|SPEC|golem-'  # must be empty after
 ```
 
+Those grep patterns stay, for the same reason `.github/workflows/boundary.yml`
+keeps its: a check that cannot name what it is looking for cannot run. Patterns
+are accepted here; enumerated filenames are not.
+
 ## Changing any of this
 
 Ask Eitan. Do not settle it in a commit message.
 
 ## Parallel sessions
 
-More than one session has worked on this tree at once, and it caused three leaks
-and one loss of uncommitted work. Rules:
+More than one session has worked on this tree at once, and it has cost both
+leaked material and lost work. Rules:
 
 - **One session per working copy.** Need two? `git worktree add ../work -b topic`, or `tools/session.sh` in the scanner repo.
 - **Never rewrite shared history**: no `--force`, `--orphan`, `reset --hard` or
