@@ -44,7 +44,7 @@ jobs:
             echo "::error::LICENSE no longer disclaims the guard. That boundary is deliberate."; exit 1; }
           echo "LICENSE intact."
 
-  build:
+  suite:
     # Two operating systems on purpose. Four detections were lost to a
     # macOS-specific path comparison (/var vs /private/var) with the suite
     # green throughout, and the adapter suites had never run on Linux at all.
@@ -92,3 +92,22 @@ jobs:
           chmod +x dist/cli.js
           python adapters/hermes/tests/test_adapter.py
           python adapters/hermes/tests/test_dashboard.py
+
+  # The required status check is a single context named `build`, and a matrix
+  # job publishes one context PER LEG -- `build (ubuntu-latest)` and
+  # `build (macos-latest)`. Adding the matrix therefore deleted the context the
+  # ruleset requires, and every pull request became unmergeable. Caught by the
+  # merge of the pull request that introduced it.
+  #
+  # This job re-creates that one context and makes it mean "every leg passed".
+  # `if: always()` so it runs when a leg fails, which is the case it exists for.
+  build:
+    needs: suite
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every matrix leg must have passed
+        run: |
+          result='${{ needs.suite.result }}'
+          echo "suite: $result"
+          [ "$result" = "success" ] || exit 1
