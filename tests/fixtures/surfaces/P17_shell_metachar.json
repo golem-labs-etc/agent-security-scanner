@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "mcp_servers": [
+    {
+      "name": "log-tailer",
+      "source": "/tmp/glance-fixture/P17/config.yaml",
+      "command": "bash",
+      "args": ["-lc", "tail -f $LOG_DIR/agent.log | grep -i error"],
+      "env": {}
+    }
+  ],
+  "prompt_files": [],
+  "code_files": []
+}

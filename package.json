@@ -1,6 +1,6 @@
 {
   "name": "glance-scanner",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Security scanner for AI agents. Static analysis by default (semgrep + npm audit), no API key. Optional AI semantic analysis on your own provider key.",
   "main": "dist/cli.js",
   "bin": {
@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/cli.ts",
-    "test": "node tests/validate.js && node tests/semgrep-skip.js && node tests/surfaces.js",
+    "test": "node tests/validate.js && node tests/semgrep-skip.js && node tests/surfaces.js && node tests/pipe.js",
     "start": "node dist/cli.js",
     "prepublishOnly": "npm run build && npm test"
   },

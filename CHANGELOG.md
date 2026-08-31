@@ -7,6 +7,192 @@ git log.
 
 ## Unreleased
 
+**The scanner returned 1508 critical and 77 high findings on a stock agent
+install, and not one of them was an attack.** 2110 files, 384 of them flagged.
+The suite was 61 for 61 green throughout. Nothing here was found by a test;
+all of it was found by running the tool on a real machine for the first time.
+
+Seven defects, and one design gap.
+
+### Fixed
+
+- **A code fence masked its opening line and one line of body, and no more.**
+  The terminator was `$` under the `m` flag, which matches at the end of every
+  line, so the lazy body stopped at the first newline. Everything past that was
+  scanned as prose. On a real skill file that is most of every fenced block:
+  the shell snippet a skill documents came back as `exfiltration_instruction`
+  at critical under *both* policies, because the downgrade path never saw it as
+  fenced. Reported as a policy failure; it was not one. The fence was never
+  found.
+- **`exfiltration_instruction` matched egress, not exfiltration.** It accepted
+  the English nouns -- *secret*, *credential*, *api key*, *password*, *token*,
+  *cookie*, *environment variable* -- as sensitive sources. Those are what a
+  skill documenting an HTTP call says in its own prose. It also treated every
+  hidden directory as a credential store, so `~/.local/bin` in a `curl ... | sh`
+  installer was a source. Sources are now named credential stores only.
+- **A credential variable used to authenticate is no longer a source.** A
+  `$VAR` inside the destination URL, after a header whose name contains
+  key/token/auth/secret/credential, as the argument to `curl -u`, or on the
+  right of an uppercase shell assignment, is authentication to the endpoint
+  being called. That one shape was 25 of 30 criticals on three stock files.
+  The cost is documented in `src/surfaces/README.md`: a stolen token sent in an
+  auth header looks identical and is missed.
+- **Loopback is not a network destination.** `curl http://localhost:8644/health`
+  crosses no network. `unencrypted_transport` already knew this; this rule
+  disagreed, and a skill's own health check was critical.
+- **The rule's window was a paragraph, and its reported line was wrong.** A
+  line-joining step meant for wrapped prose joined YAML frontmatter, list items
+  and checklists too, so a `curl` on one key, an "API key" on another and a URL
+  on a third were one "sentence" reported at line 1. The window is now an
+  explicit 240 characters, lines join only where prose actually wraps, inside a
+  fence only across a trailing backslash, and the reported span is exact --
+  `end_line` is set whenever a finding covers more than one line.
+- **A word that is the local part of an email address is not a verb.**
+  `ssh-keygen -C "their-email@example.com" -f ~/.ssh/id_ed25519` was critical:
+  `email` read as the verb, `example.com` as the destination.
+- **`prompt_injection` fired on "tell the user".** "don't tell the user to run
+  `/skin`", "never tell a user to put a non-credential setting in `.env`", and
+  "Do NOT explain how @mention works to the user" -- which matched because
+  `@mention` contains `mention`. 54 of 65 findings were that one shape. The
+  category now reads instruction-override phrasing only. The concealment
+  phrases still fire where the text carrying them is itself hidden, in an HTML
+  comment or behind a homoglyph, which is where they mean something.
+- **`obfuscated_text` fired on Greek.** All 12 hits were finance documents
+  writing `ΔAR`, `ΔInventory`, `ΔCommon Stock`. The original specification
+  treating Cyrillic and Greek as one signal was wrong: Cyrillic inside a Latin
+  word has no innocent explanation and Greek does. Greek stays in the homoglyph
+  fold used by `hidden_instruction`, which additionally requires a directive
+  phrase to appear once the folding is undone.
+- **A placeholder is not a credential.** `sk-xxxxxxxxxxxxxxxxxxxx` in a
+  documented config example matched the OpenAI shape exactly. `secretShape`
+  already refused placeholders; `findSecretsInText` did not.
+
+### Changed
+
+- **One problem is reported once, with every address it has.** A prompt
+  finding's `id` is now fingerprinted on the file's SHA-256 rather than its
+  path. A skill file that exists in twenty-two profiles, byte for byte
+  identical, was twenty-two separate findings; it is now one, carrying
+  `occurrences: 22` and the other twenty-one paths in `also_in`. Keying on
+  content also means the id survives a profile being added or removed, which a
+  path-derived id did not. MCP and code findings keep the path: there is no
+  file content to key them on.
+- `Finding` gains `end_line`, `occurrences` and `also_in`, all optional and all
+  absent when they would say nothing.
+
+### Added
+
+- **Three stock skill files, verbatim, as negative fixtures**, asserted at zero
+  critical and zero high under both policies. Every other negative in the suite
+  is short, hand-written, and has its payload on one line, which is why 61 of
+  61 passed while the real number was 1508. Provenance and licence are in
+  `tests/fixtures/surfaces/real/README.md`.
+- **`FENCE`, a structural check on fence extent.** When the fence terminator
+  was reverted deliberately, no fixture failed -- the other narrowings kept the
+  real files clean either way. The extent is now asserted directly.
+
+### The gap that was here is closed
+
+An earlier draft of this entry recorded that there was no positive fixture for
+a fenced multi-line exfiltration, because writing one required a file carrying
+a working payload and the local guard's own secret-egress rule blocked the
+write. That rule was the thing at fault, it has been fixed, and the fixtures
+now exist.
+
+`P20_fenced_multiline_exfil.md` is a four-line backslash-continued `curl`
+inside a fence, uploading a credentials file, with the source on one line and
+the destination on the next. It asserts under BOTH policies, because the
+difference between them is the assertion: balanced downgrades it to a medium
+`fenced_directive`, strict reports it as `exfiltration_instruction` critical.
+Reverting the fence terminator makes it critical under balanced, which is
+exactly the symptom reported from the real machine.
+
+`N14_documented_api_call.md` is the same shape with the credentials file
+removed: two documented public API calls, fenced, multi-line, one a POST with a
+body. Removing the sensitive-source requirement makes its strict half fail,
+along with all three real Hermes fixtures.
+
+Still open: no positive fixture for a credential variable posted as data rather
+than as authentication. That boundary is held by the auth-exclusion logic and
+by R2, which contains 25 real authenticated API calls, but not by a positive.
+
+### Numbers
+
+Same machine, same 2110 files, `--policy balanced`, which is what produced the
+1508:
+
+| | before | after |
+|---|---|---|
+| critical | 1508 | 0 |
+| high | 77 | 3 |
+| files flagged | 384 | 3 |
+
+The three remaining high findings are two red-teaming skills that contain
+attack strings by design -- a Cyrillic homoglyph in `godmode` and "ignore
+previous instructions" in `darwinian-evolver`. Under `--policy strict`, which
+is what the Hermes adapter passes, the same scan is 0 critical and 5 high, and
+the adapter's own inventory of 1904 files is 0 critical and 2 high.
+
+
+## 1.3.1
+
+**The scanner threw away part of its own report.** Not crashed, not errored,
+not warned. Exit code intact, stderr empty, JSON cut in half.
+
+`glance-scanner surfaces` called `process.exit()` immediately after writing its
+report. `process.exit()` does not flush a pending asynchronous write. stdout to
+a terminal is synchronous, so this was invisible by hand; stdout to a pipe is
+not, so any report over 64 KB reached its caller truncated at exactly 65536
+bytes, mid-JSON. Every consumer that reads this tool as a program reads it
+through a pipe. No person ever does.
+
+It was found by someone using the tool for real, not by any test here. The
+scanner's suite was 54 for 54 and the Hermes adapter's was 12 for 12 on the
+commit that carried the bug. Every one of those tests called the library
+directly, and the library was returning the right object throughout. The defect
+was in the last inch, between a correct object and the reader's stdin, and
+nothing in this repository was looking there. CI was not running the suite at
+all: it type-checked and stopped.
+
+**Which invocations were affected.** Any run of `surfaces` whose report exceeds
+64 KB and whose stdout is not a terminal. That is roughly 300 findings. Piping
+to `jq`, redirecting to a file, or reading it from another program all
+qualify; running it in a terminal does not.
+
+**How far it reached.** `surfaces` was merged to `main` on 30 August and has
+never been published to npm. The last published release, 1.3.0 (28 August),
+contains only `analyze` and `install-tools`. `analyze` writes its report and
+returns rather than calling `process.exit()`, and is not affected: verified
+against the published 1.3.0 tarball, 185,065 bytes over a pipe, parsed. So no
+released version of this package truncated anything. That is not a design
+anyone here can take credit for. It is the same code written twice, once
+safely and once not, and only the unsafe one was new.
+
+### Added
+
+- **`surfaces`: scan agent surfaces rather than code.** MCP server
+  configuration and prompt or skill files are read by an agent as
+  configuration and as instruction, and neither semgrep nor `npm audit` reads
+  either one. Takes `--inventory <file.json>` or `--root <dir>`, emits findings
+  as JSON with `--json`. Ten categories, listed by `--list-categories` so a
+  consumer builds its own map from the engine rather than keeping a copy that
+  drifts.
+- **`--policy balanced|strict`.** `balanced` treats a directive inside a code
+  fence as documentation and reports it at medium. `strict` treats it as text
+  the agent will read anyway and reports it in full, which is the right
+  reading for anything consuming raw markdown. There is no `off` level for any
+  category: a knob that silences a rule is the first thing reached for when a
+  tool is noisy, and then you are blind to every later instance of it.
+  Concealed characters are judged independently of the fence and always win,
+  because a fence does not defeat a zero-width character.
+- **Findings carry no matched text by default.** `--evidence` attaches it on
+  request. This is the default rather than the caller's responsibility because
+  the caller is sometimes an LLM prompt, and quoting the payload there delivers
+  the exact thing the finding is warning about.
+- **Configuration is never read from the tree being scanned.** A `.glance.json`
+  found inside a scan target is ignored and named in a warning. Otherwise a
+  repository can ship a file that turns off detection on itself.
+
 ### Changed
 
 - **Findings at the same file and line collapse into one.** Two semgrep rules
@@ -28,6 +214,27 @@ git log.
   The count of further advisories for the same package is appended.
 
 ### Fixed
+
+- **`surfaces` no longer truncates its report on a pipe.** See above.
+  `src/cli.ts` sets `process.exitCode` and returns; the exits that remain flush
+  stdout before terminating. `tests/pipe.js` spawns the built binary, reads it
+  through a real pipe, and asserts a report over 64 KB parses. It is
+  table-driven over every subcommand: a command is either exercised there or
+  listed as exempt with a reason, so a new command that is neither fails the
+  suite. The check fails at exactly 65536 bytes against the previous build.
+- **Three detection categories had no test proving they fire.** The coverage
+  check counted categories that were emitted and confirmed each was declared,
+  then reported "10 declared, 8 exercised, 0 uncovered" and passed. It never
+  asked the question that matters, which is whether every declared category is
+  emitted by anything. `credential_leak` (critical), `command_injection_risk`
+  (high) and `unpinned_remote_exec` (info) had no positive fixture. The first
+  two are severities the Hermes adapter puts in front of an agent. All three
+  now have one, and the check fails by name on any declared category that no
+  positive fixture emits.
+- **CI runs the test suite.** It previously ran `tsc --noEmit` and nothing
+  else, so no test in this repository was gating any push. `npm test` and a
+  semgrep install are now part of the build job, and `prepublishOnly` already
+  runs build and test, so a truncating build cannot be published.
 
 - **Local rule ids no longer carry the install path.** semgrep names a rule
   loaded from `--config=<dir>` after that directory, so our own rule was
