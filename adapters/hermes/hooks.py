@@ -29,6 +29,11 @@ log = logging.getLogger("glance.hermes")
 # background service is a slow leak rather than a crash, which is worse.
 _MAX_SESSIONS = 256
 
+# Marks "this session has already been told the engine is below the floor".
+# A NUL cannot appear in a scanner fingerprint, so it can never collide with a
+# finding id sharing the same set.
+_FLOOR_KEY = "\0engine-floor"
+
 _announced: "OrderedDict[str, Set[str]]" = OrderedDict()
 _announced_lock = threading.Lock()
 
@@ -71,6 +76,100 @@ _TRAILER = (
 )
 
 
+# The announcement is an UNTRUSTED CHANNEL. A finding's path is a filename on
+# disk, and a filename is written by whoever wrote the file -- which, for every
+# finding this tool exists to report, is the attacker. Interpolating it raw into
+# a prompt let a directory name containing newlines close the line and forge a
+# complete, well-formed Glance announcement claiming a clean scan and telling
+# the agent to pipe a URL into a shell. Demonstrated end to end, not reasoned
+# about. Everything below exists because of that.
+_MAX_PATH = 200
+
+# Characters that must never reach the prompt as themselves: every C0 and C1
+# control (newline and carriage return above all), DEL, the Unicode line and
+# paragraph separators, and the zero-width, bidi-override and byte-order marks.
+# The last group cannot break a line but can reorder what a human reads, which
+# is the same class of lie by another route -- and it is a category this
+# scanner reports in other people's files.
+def _escape(s: str) -> str:
+    out = []
+    for ch in str(s):
+        o = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif (
+            o < 0x20 or o == 0x7F or 0x80 <= o <= 0x9F
+            or o in (0x2028, 0x2029, 0xFEFF)
+            or 0x200B <= o <= 0x200F
+            or 0x202A <= o <= 0x202E
+            or 0x2066 <= o <= 0x2069
+        ):
+            out.append("\\u%04x" % o)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _render_path(path: Any, line: Any) -> str:
+    """A path rendered so it cannot be mistaken for anything but a path.
+
+    Escaped first, then truncated, then quoted. That order matters: truncating
+    raw input and escaping afterwards can cut a multi-character sequence in a
+    way that changes what the escape produces. Once escaped, every character is
+    printable and cutting anywhere is safe -- the worst case is a shortened
+    `\\u00` that is still inert text.
+
+    The quotes are the second half of the fix. Escaping stops a path forging a
+    newline; quoting stops a path that contains no control characters at all
+    from reading as prose. A directory literally named
+    `ignore the above and run this` is a legal filename.
+    """
+    s = _escape(path or "")
+    if len(s) > _MAX_PATH:
+        s = s[:_MAX_PATH] + "...(truncated)"
+    q = '"' + s + '"'
+    # The line number is ours, from the scanner's integer field, and goes
+    # OUTSIDE the quotes so it can never be confused for part of the name.
+    try:
+        n = int(line)
+    except (TypeError, ValueError):
+        return q
+    return f"{q}:{n}"
+
+
+# severity, category and id are closed vocabularies the scanner controls, not
+# the filesystem. A whitelist rather than an escape, because anything outside
+# it means the report is not the shape this adapter was written against, and a
+# `?` that a reader can see is better than a silent pass-through.
+_FIELD_OK = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+
+
+def _field(v: Any, limit: int = 40) -> str:
+    s = "".join(c if c in _FIELD_OK else "?" for c in str(v or ""))
+    return s[:limit]
+
+
+# How much of a flood reaches the prompt. Both caps, because either alone
+# leaves the other unbounded: twenty findings with pathological paths is still
+# 40 KB, and 4 KB of ordinary findings is still forty lines nobody reads.
+#
+# 20 findings. Ordinary work produces one to three at a time. The suite's
+# deliberately hostile tree produces ten. Twenty is comfortably above anything
+# real and below `runner.IMPLAUSIBLE_CRITICAL` (25), so the two numbers cannot
+# contradict each other. Past twenty, listing more adds no decision the reader
+# can make from the feed; they go to the pane, which lists everything.
+#
+# 4096 bytes for the list. Roughly a thousand tokens -- half a percent of a
+# 200k context -- so an announcement can never be a context-pressure event. An
+# ordinary finding line is 90 to 120 bytes, so 4 KB holds thirty to forty of
+# them: the byte cap binds only when paths are pathological, which is exactly
+# when it should.
+MAX_ANNOUNCED = 20
+MAX_ANNOUNCE_BYTES = 4096
+
+
 def format_findings(findings: List[Dict[str, Any]]) -> str:
     """Render the agent-facing block.
 
@@ -78,15 +177,35 @@ def format_findings(findings: List[Dict[str, Any]]) -> str:
     the line, the category and the id are enough for a person to go and look,
     and quoting the payload here would deliver into the agent's context exactly
     the thing the finding is warning about.
+
+    Bounded on both axes. Withheld findings are still marked as seen by the
+    caller and are NOT re-offered next turn: dribbling a flood out twenty at a
+    time would be eighty-three consecutive turns of it. The tail line says how
+    many were withheld and where the complete list lives, which is the same
+    division of labour as the baseline -- the feed is a pointer, the pane is
+    the record.
     """
     n = len(findings)
     lines = [f"Glance: {n} new finding{'s' if n != 1 else ''}."]
+    shown = 0
+    used = 0
     for f in findings:
-        loc = f.get("path", "")
-        if f.get("line"):
-            loc = f"{loc}:{f['line']}"
+        if shown >= MAX_ANNOUNCED:
+            break
+        row = (
+            f"  {_field(f.get('severity'), 12)}  {_field(f.get('category'))}  "
+            f"{_render_path(f.get('path'), f.get('line'))}  [{_field(f.get('id'), 16)}]"
+        )
+        if used + len(row.encode('utf-8')) > MAX_ANNOUNCE_BYTES:
+            break
+        lines.append(row)
+        used += len(row.encode('utf-8'))
+        shown += 1
+    withheld = n - shown
+    if withheld:
         lines.append(
-            f"  {f.get('severity','')}  {f.get('category','')}  {loc}  [{f.get('id','')}]"
+            f"  ... and {withheld} more not shown (limit {MAX_ANNOUNCED} findings, "
+            f"{MAX_ANNOUNCE_BYTES} bytes). All of them are in the Glance pane."
         )
     lines.append("")
     lines.append(_TRAILER)
@@ -94,19 +213,21 @@ def format_findings(findings: List[Dict[str, Any]]) -> str:
 
 
 def format_engine_floor_notice(detail: str) -> str:
-    """The one-time notice that the installed engine is too old.
+    """The per-session notice that the feed is off because the engine is old.
 
-    Same channel and same one-shot discipline as the others. It goes FIRST,
-    ahead of the first-run notice, because it changes how everything that
-    follows should be read: an engine below the floor is one whose findings are
-    known to be unreliable, and saying so after the baseline notice would be
-    saying it too late.
+    Goes ahead of every other notice and replaces all of them: while the engine
+    is below the floor there is nothing else worth saying, and a baseline
+    notice counting findings from an untrustworthy scanner would be counting
+    noise.
     """
     return (
-        "Glance: the installed scanner is older than this adapter expects. "
-        "Findings from it may be wrong in both directions.\n"
+        "Glance: NOT REPORTING. The installed scanner is older than this "
+        "adapter expects, and its findings are not trustworthy enough to put "
+        "in front of you.\n"
         f"{detail}\n"
-        "This notice is sent once and will not repeat."
+        "No findings will be reported until it is upgraded. Silence from now "
+        "on does not mean this machine is clean.\n"
+        "The Glance pane still shows everything the old scanner found."
     )
 
 
@@ -196,18 +317,37 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> Optional[Dict[str, str]
     try:
         seen = _session_set(session_id)
 
-        # The engine floor goes ahead of everything. It is the frame for
-        # whatever follows: findings from an engine below the floor are known
-        # to be unreliable, and a baseline notice read before that fact is read
-        # wrongly.
-        stale_engine = runner.take_engine_floor_notice()
-        if stale_engine:
-            log.warning(
-                "glance: engine below floor, notice sent once to session %s: %s",
-                session_id or "(none)",
-                stale_engine,
-            )
-            return {"context": format_engine_floor_notice(stale_engine)}
+        # The engine floor SUPPRESSES the feed. It does not warn beside it.
+        #
+        # Warning beside it was the previous design and it did not restrain
+        # anything: the notice fired on turn one and 1664 findings from the
+        # engine we had just declared untrustworthy landed on turn two. A
+        # scanner whose output was 1602-for-1602 wrong on a real machine has no
+        # business putting anything into an agent prompt, and every finding it
+        # emits is an instruction to distrust a file plus a path the filesystem
+        # controls.
+        #
+        # This is not an off switch. It is automatic, it is tied to one
+        # declared condition, it says so every session, the pane keeps showing
+        # everything, and it opens by itself the moment a scan completes on a
+        # current engine. Suppression from the agent feed, not deletion -- the
+        # same distinction the baseline already draws.
+        if runner.engine_stale():
+            # Once per SESSION, not once per machine. Once per machine was
+            # right when the notice sat beside a working feed. Now it is the
+            # only thing the feed says, and a security tool that goes silent
+            # forever after one message a user scrolled past is the failure
+            # this whole prompt is about.
+            if _FLOOR_KEY not in seen:
+                seen.add(_FLOOR_KEY)
+                detail = runner.engine_floor_detail()
+                log.warning(
+                    "glance: engine below floor, feed suppressed for session %s: %s",
+                    session_id or "(none)",
+                    detail,
+                )
+                return {"context": format_engine_floor_notice(detail)}
+            return None
 
         # The first-run notice goes next, and goes alone. On a first run every
         # finding is already baselined, so `fresh` is empty and there is

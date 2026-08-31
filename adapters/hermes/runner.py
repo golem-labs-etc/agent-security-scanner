@@ -290,9 +290,39 @@ def engine_below_floor(version: Optional[str]) -> bool:
     return _version_tuple(version) < _version_tuple(MIN_ENGINE)
 
 
-def take_engine_floor_notice(home: Optional[Path] = None) -> Optional[str]:
-    """The one-time notice that the installed engine is below MIN_ENGINE."""
-    return _take_once(home, "engine_floor")
+def engine_stale(home: Optional[Path] = None) -> bool:
+    """Did the last completed scan come from an engine below the floor?
+
+    Derived from the cache on every call rather than latched on disk, because
+    this now gates the whole agent feed: the moment someone upgrades the
+    scanner and a scan completes, the gate has to open by itself. A latched
+    flag would need clearing, and a flag that needs clearing is a flag that
+    stays set.
+
+    An absent cache is NOT stale -- a fresh install before its first scan has
+    no engine version and must not be treated as a bad one. An engine that
+    reports no version at all is also not treated as stale HERE, deliberately:
+    the once-only warning still fires on it, but suppressing every finding on a
+    machine because a version string was missing is a bigger hammer than the
+    evidence justifies.
+    """
+    cache = get_cached(home)
+    if not cache:
+        return False
+    version = cache.get("engine_version")
+    if not version:
+        return False
+    return engine_below_floor(version)
+
+
+def engine_floor_detail(home: Optional[Path] = None) -> str:
+    """The sentence naming the installed version and the required one."""
+    cache = get_cached(home) or {}
+    return (
+        f"{SCANNER_BIN} reports version {cache.get('engine_version') or 'unknown'}; "
+        f"this adapter expects {MIN_ENGINE} or newer. Upgrade with "
+        f"`npm install -g glance-scanner@latest`."
+    )
 
 
 # Fields the pane is allowed to see. A whitelist, not a blacklist: the scanner
@@ -540,18 +570,6 @@ def run_scan(home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
         "total_scanned": report.get("total_scanned", 0),
     }
     _write_json_atomic(_cache_path(root), cache)
-
-    # The engine floor. Checked here rather than at the README, because a
-    # README cannot reach someone with an old global install and this can.
-    if engine_below_floor(cache.get("engine_version")):
-        _arm_once(
-            root,
-            "engine_floor",
-            f"{SCANNER_BIN} reports version "
-            f"{cache.get('engine_version') or 'unknown'}; this adapter expects "
-            f"{MIN_ENGINE} or newer. Upgrade with `npm install -g "
-            f"glance-scanner@latest`.",
-        )
 
     # First look ever: record what was already here and alert on none of it.
     # A tool that is red on install teaches people to ignore it.
