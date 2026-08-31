@@ -15,11 +15,13 @@
     "package.json"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node tools/provenance.js stamp",
     "dev": "ts-node src/cli.ts",
-    "test": "node tests/validate.js && node tests/semgrep-skip.js && node tests/surfaces.js && node tests/pipe.js",
+    "test": "node tools/provenance.js check && node tests/validate.js && node tests/semgrep-skip.js && node tests/surfaces.js && node tests/pipe.js",
     "start": "node dist/cli.js",
-    "prepublishOnly": "npm run build && npm test"
+    "check-dist": "node tools/provenance.js check",
+    "check-dist:release": "node tools/provenance.js check --release",
+    "prepublishOnly": "npm run build && npm test && npm run check-dist:release"
   },
   "repository": {
     "type": "git",
