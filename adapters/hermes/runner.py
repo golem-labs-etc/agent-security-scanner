@@ -133,7 +133,17 @@ def baseline_ids(home: Optional[Path] = None) -> set:
 
 
 def has_baseline(home: Optional[Path] = None) -> bool:
-    return _baseline_path(home).exists()
+    """True once a scan has actually recorded a baseline.
+
+    The presence of the file is deliberately NOT the test. The scanner-missing
+    notice writes its one-shot mark into this same document before any scan has
+    ever run, and a file-existence test would then make the first successful
+    scan look like a second run: nothing would be baselined and the first-run
+    notice would never fire. The `ids` key is written only by a completed scan,
+    so it is the honest signal.
+    """
+    doc = _read_json(_baseline_path(home))
+    return isinstance(doc, dict) and "ids" in doc
 
 
 def take_first_run_notice(home: Optional[Path] = None) -> Optional[Dict[str, int]]:
@@ -164,6 +174,53 @@ def take_first_run_notice(home: Optional[Path] = None) -> Optional[Dict[str, int
         # every turn: an unclearable flag would otherwise repeat forever.
         return None
     return payload
+
+
+def _mark_scanner_missing(home: Optional[Path], detail: str) -> None:
+    """Arm the one-time scanner-missing notice. Idempotent.
+
+    Written into the baseline document rather than a file of its own, beside
+    `notice_pending`, so there is exactly one piece of state to reason about.
+    `_armed` is set on the first arming and never cleared, so a machine that
+    stays without a scanner arms once, not once per session.
+    """
+    path = _baseline_path(home)
+    doc = _read_json(path) or {}
+    if doc.get("scanner_missing_armed"):
+        return
+    doc["scanner_missing_armed"] = True
+    doc["scanner_missing_pending"] = True
+    doc["scanner_missing_error"] = detail[:_ERR_MAX]
+    try:
+        _write_json_atomic(path, doc)
+    except Exception:
+        # Nothing to do. The pane still shows scanner_available: false, and
+        # the next scan attempt will try to arm again.
+        pass
+
+
+def take_scanner_missing_notice(home: Optional[Path] = None) -> Optional[str]:
+    """Claim the one-time scanner-missing notice, or return None.
+
+    Same one-shot discipline as `take_first_run_notice`: the flag is cleared on
+    disk BEFORE the payload is returned, so a crash between the claim and the
+    announcement loses the notice rather than repeating it every turn.
+
+    Returns the stored `last_error` text -- the message that already names the
+    binary and says how to fix it -- so the agent feed and the pane say the
+    same thing.
+    """
+    path = _baseline_path(home)
+    doc = _read_json(path)
+    if not doc or not doc.get("scanner_missing_pending"):
+        return None
+    detail = str(doc.get("scanner_missing_error") or "")
+    doc["scanner_missing_pending"] = False
+    try:
+        _write_json_atomic(path, doc)
+    except Exception:
+        return None
+    return detail or None
 
 
 # Fields the pane is allowed to see. A whitelist, not a blacklist: the scanner
@@ -339,10 +396,15 @@ def run_scan(home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     digest = inventory_digest(inv)
 
     if not scanner_available():
-        _set_error(
+        detail = (
             f"{SCANNER_BIN} not found on PATH. Install glance-scanner, or set "
             "GLANCE_SCANNER_BIN to its full path."
         )
+        _set_error(detail)
+        # Silence here is indistinguishable from a clean machine. Arm the
+        # one-time notice so the agent feed says so once, instead of leaving
+        # the fact to a pane a new user may never open.
+        _mark_scanner_missing(root, detail)
         return None
 
     fd, tmp = tempfile.mkstemp(prefix="glance-inv-", suffix=".json")

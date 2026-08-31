@@ -155,6 +155,23 @@ inside them. Run `glance-scanner surfaces --evidence` to inspect.
 No evidence, no matched text, no file content, ever. A finding is announced
 once per session, not once per turn.
 
+Two one-time notices use the same channel, each sent once per machine and
+marked as spent on disk so a restart does not repeat them. The first says a
+baseline was taken and how much it covers. The second says the adapter is not
+scanning at all:
+
+```
+Glance: not scanning. No findings are being produced, and silence from this
+point does not mean the machine is clean.
+glance-scanner not found on PATH. Install glance-scanner, or set
+GLANCE_SCANNER_BIN to its full path.
+```
+
+Without it, an install with no scanner produces exactly what a clean machine
+produces. `scanner_available` and `last_error` reach the pane, and a new user
+may never open the pane. Silence has to mean "checked and found nothing", never
+"never checked".
+
 ## Dashboard and pane
 
 Both halves follow contracts the host enforces, and both are easy to get wrong
@@ -193,16 +210,44 @@ copy drifts.
 
 This adapter is published as its own repository,
 [`golem-labs-etc/glance-hermes`](https://github.com/golem-labs-etc/glance-hermes),
-because `hermes plugins install owner/repo` has no subdirectory support and
-plugins are discovered at `~/.hermes/plugins/<name>/`. Nothing can install a
-plugin that lives at `adapters/hermes/` inside a monorepo, so the contents of
-this directory are mirrored to the root of that repository.
+whose root is the contents of this directory.
 
-**Install a tag, not a branch.**
+The mirror is not a convenience. Installing this directory straight from the
+monorepo does not work, and the reason is Hermes' own pre-install scanner:
 
 ```
-hermes plugins install golem-labs-etc/glance-hermes@v0.1.0
+hermes plugins install golem-labs-etc/agent-security-scanner/adapters/hermes
 ```
+
+exits 1 with `Decision: BLOCKED — Blocked (community source + dangerous
+verdict, 17 findings)`, and `--force` does not override a dangerous verdict.
+Nothing is written to `plugins/`. The findings are this adapter's own tests:
+`tests/test_adapter.py` and `tests/test_dashboard.py` carry attack-shaped
+strings inline, because those strings are the thing under test. Hermes reads
+them as what they resemble, which is the correct call on a stranger's
+repository. The mirror excludes `tests/`, so it installs cleanly. The tests
+stay in the public monorepo, so nothing is hidden.
+
+The path form itself is fine — `hermes plugins install owner/repo/subdir` is
+supported. It is the payload that is refused.
+
+**Install:**
+
+```
+hermes plugins install golem-labs-etc/glance-hermes
+```
+
+**Pin to a commit, not a tag.** Hermes cannot install a tag.
+`owner/repo@v0.1.0` is not parsed as a ref; the whole string is appended to the
+clone URL and the install fails with `Repository not found`. The only pin
+Hermes accepts is `--ref` with a full 40-character commit SHA:
+
+```
+hermes plugins install golem-labs-etc/glance-hermes --ref <40-character commit SHA>
+```
+
+Tags here are for humans reading the releases page. Every release names the
+commit it was cut from; copy that SHA into `--ref`.
 
 Then confirm what it registered:
 
@@ -210,19 +255,19 @@ Then confirm what it registered:
 hermes plugins capabilities glance-surfaces
 ```
 
-### Hermes verifies nothing about what it installs
+### Hermes verifies nothing about who wrote what it fetches
 
 Say this plainly rather than leaving it implied: Hermes performs **no signature
-checking, no checksum verification and no version pinning** of any kind. It
-fetches what the name resolves to and runs it. Installing a branch means
-installing whatever that branch says today.
+checking and no checksum verification**. It fetches what the name resolves to
+and runs it. Installing without `--ref` means installing whatever the default
+branch says today.
 
-That is why every release is tagged and why each one publishes a SHA-256
-checksum of its own tree. The verification is yours to do, and the checksum is
-there so that it is possible at all:
+`--ref` is the one real control, and it is a strong one — a commit SHA is
+immutable, so a pinned install cannot change underneath you. It is not
+authentication: a SHA fixes which bytes, never who wrote them.
 
-Every release attaches `CHECKSUMS.txt`, a SHA-256 per file. To check an
-install against it:
+Every release attaches `CHECKSUMS.txt`, a SHA-256 per file. To check an install
+against it:
 
 ```
 cd ~/.hermes/plugins/glance-surfaces
@@ -231,10 +276,14 @@ shasum -a 256 -c CHECKSUMS.txt        # macOS
 sha256sum -c CHECKSUMS.txt            # Linux
 ```
 
-Both tools read the same file. `__pycache__` is generated after install and is
-not listed, so ignore any `FAILED open or read` for a `.pyc`. Anything else
-that fails means the tree is not what was released: remove the plugin and say
-so publicly.
+Both tools read the same file. Two things in the installed tree are not listed
+and are therefore not checked. `__pycache__` is generated after install, so
+ignore any `FAILED open or read` for a `.pyc`. And `.git` is present because
+Hermes installs by cloning rather than exporting: the installed plugin carries
+a full git directory, remote configuration included, which `CHECKSUMS.txt`
+neither covers nor can vouch for. Anything else that fails means the tree is
+not what was released: remove the plugin and say so publicly.
+
 
 ## Requirements
 

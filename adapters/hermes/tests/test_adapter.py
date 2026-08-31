@@ -577,6 +577,102 @@ def run_all(tmp: Path, scanner) -> int:
         for line in out.strip().splitlines()[:25]:
             print(f"        {line}")
 
+    # ---- V16: no scanner is not the same as nothing found ----------------
+    #
+    # The failure this closes: on_session_start swallows everything,
+    # pre_llm_call returns None on an empty cache, and scanner_available and
+    # last_error reach only the pane. A stranger who installs the plugin
+    # without the scanner therefore gets EXACTLY what a clean machine gets.
+    # Silence has to mean "checked and found nothing", never "never checked".
+    print()
+    print("V16 a missing scanner says so once, and only when it is missing")
+
+    missing_home = tmp / "noscanner"
+    make_clean_tree(missing_home)
+    use_home(missing_home)
+    hooks.reset_for_tests()
+
+    # SCANNER_BIN is read at import time, so the environment cannot move it
+    # here. Point the module constant at a name that cannot exist.
+    saved_bin = runner.SCANNER_BIN
+    runner.SCANNER_BIN = "glance-scanner-does-not-exist-" + "0" * 8
+    try:
+        scanned = runner.run_scan(missing_home)
+        first = hooks.pre_llm_call(session_id="v16a")
+        second = hooks.pre_llm_call(session_id="v16a")
+        # A different session, because "once" is per machine and not per
+        # session: a second session must not hear it again either.
+        third = hooks.pre_llm_call(session_id="v16a-other")
+
+        said = (first or {}).get("context", "")
+        check(
+            "V16a the agent is told once that nothing is being scanned",
+            scanned is None and bool(first) and "not scanning" in said.lower(),
+            repr(said.splitlines()[0]) if said else "no notice",
+        )
+        check(
+            "V16a notice carries the actionable last_error text",
+            "GLANCE_SCANNER_BIN" in said and runner.SCANNER_BIN in said,
+            "names the binary and the override",
+        )
+        check(
+            "V16b it does not repeat, in this session or another",
+            second is None and third is None,
+            f"second={second!r} third={third!r}",
+        )
+
+        # A restart drops the in-memory state. The one-shot has to survive it,
+        # which is the whole reason the mark is on disk.
+        hooks.reset_for_tests()
+        use_home(missing_home)
+        after_restart = hooks.pre_llm_call(session_id="v16c")
+        check(
+            "V16c it does not repeat after a restart",
+            after_restart is None,
+            f"{after_restart!r}",
+        )
+    finally:
+        runner.SCANNER_BIN = saved_bin
+
+    if not scanner:
+        check("V16d", False, "scanner not on PATH")
+        check("V16e", False, "scanner not on PATH")
+    else:
+        # With a scanner present the notice must never fire -- not on the first
+        # run, not later.
+        present = tmp / "scannerpresent"
+        make_clean_tree(present)
+        use_home(present)
+        hooks.reset_for_tests()
+        runner.run_scan(present)
+        outs = [hooks.pre_llm_call(session_id="v16d") for _ in range(3)]
+        never = not any(
+            "not scanning" in (o or {}).get("context", "").lower() for o in outs
+        )
+        check("V16d silent about the scanner when the scanner is there", never)
+
+        # And the disk mark must not have eaten the first run. baseline.json is
+        # written by the scan above, so a scan that follows an armed notice
+        # still baselines and still announces -- has_baseline tests the `ids`
+        # key, not the file.
+        armed = tmp / "armedthenscanner"
+        make_hostile_tree(armed)
+        use_home(armed)
+        hooks.reset_for_tests()
+        saved_bin = runner.SCANNER_BIN
+        runner.SCANNER_BIN = "glance-scanner-does-not-exist-" + "0" * 8
+        try:
+            runner.run_scan(armed)          # arms the mark, writes baseline.json
+        finally:
+            runner.SCANNER_BIN = saved_bin
+        runner.run_scan(armed)              # the real first scan
+        st = runner.stats(armed)
+        check(
+            "V16e an armed mark does not consume the first run",
+            runner.has_baseline(armed) and st["baselined"] > 0,
+            f"{st['baselined']} baselined after the scan",
+        )
+
     # ---- V10: first-run baselining is visible, not silent ----------------
     #
     # Baselining on first run is right for the agent and wrong for the human.
