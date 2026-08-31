@@ -30,7 +30,54 @@ from hermes.discover import build_inventory, inventory_digest, real  # noqa: E40
 TEMPLATE_CONSTANTS = ""
 PASS = 0
 FAIL = 0
+SKIP = 0
 FAILURES = []
+SKIPPED = []
+
+
+def _hermes_agent_dir():
+    """Where the installed Hermes source lives, or None.
+
+    The `hermes` on PATH is a wrapper that execs a venv python against a
+    checkout. Read the path back out of it rather than guessing a location:
+    a guess that misses would make this test skip forever without anyone
+    noticing, which is worse than not having it.
+    """
+    wrapper = shutil.which("hermes")
+    if not wrapper:
+        return None
+    try:
+        text = Path(wrapper).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for token in text.replace('"', " ").replace("'", " ").split():
+        q = Path(token)
+        if q.name == "hermes" and (q.parent / "tools" / "plugin_guard.py").is_file():
+            return q.parent
+    return None
+
+
+def _hermes_python(agent_dir: Path) -> str:
+    """The interpreter that has Hermes' dependencies importable."""
+    venv = agent_dir / "venv" / "bin" / "python"
+    return str(venv) if venv.exists() else sys.executable
+
+
+def skip(label: str, reason: str) -> None:
+    """Not run, and not a failure.
+
+    Reserved for checks that depend on Hermes ITSELF being installed. Hermes is
+    not a dependency of this adapter -- CI has no reason to have it -- and a
+    check that cannot run there must not read as a defect that is there.
+
+    Deliberately NOT used for the scanner. `glance-scanner` is a hard
+    dependency: a run without it is a broken environment, and every
+    scanner-dependent check still fails loudly.
+    """
+    global SKIP
+    SKIP += 1
+    SKIPPED.append(label)
+    print(f"  skip  {label}  {reason}")
 
 
 def check(label: str, ok: bool, detail: str = "") -> None:
@@ -563,7 +610,7 @@ def run_all(tmp: Path, scanner) -> int:
     print("V9  hermes plugins doctor")
     doctor = shutil.which("hermes")
     if not doctor:
-        check("V9", False, "hermes not on PATH")
+        skip("V9", "hermes not on PATH; this checks Hermes' own loader")
     else:
         proc = subprocess.run(
             ["hermes", "plugins", "doctor", str(ADAPTER_DIR)],
@@ -672,6 +719,203 @@ def run_all(tmp: Path, scanner) -> int:
             runner.has_baseline(armed) and st["baselined"] > 0,
             f"{st['baselined']} baselined after the scan",
         )
+
+    # ---- V17: the mirror still passes Hermes' own pre-install guard ------
+    #
+    # The mirror installs only because plugin_guard finds nothing dangerous in
+    # it, and the subdirectory route is blocked because it finds the tests.
+    # That is load-bearing and nothing tested it: a future file with an
+    # attack-shaped string in it, anywhere outside tests/, would silently make
+    # the plugin uninstallable for everyone.
+    print()
+    print("V17 the mirror tree passes plugin_guard")
+
+    guard_dir = _hermes_agent_dir()
+    if guard_dir is None:
+        skip("V17", "hermes not on PATH, or its source could not be located")
+    elif shutil.which("rsync") is None:
+        skip("V17", "rsync not available; cannot build the mirror tree")
+    else:
+        # Built exactly as .github/workflows/mirror.yml builds it: same three
+        # excludes, same trailing slash. A different copy here would test a
+        # tree nobody ships.
+        mirror = tmp / "mirror"
+        mirror.mkdir(parents=True, exist_ok=True)
+        sp.run(
+            ["rsync", "-a", "--exclude=__pycache__/", "--exclude=*.pyc",
+             "--exclude=tests/", f"{ADAPTER_DIR}/", f"{mirror}/"],
+            check=True,
+        )
+        excluded = not (mirror / "tests").exists()
+
+        PROBE = (
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "sys.path.insert(0, %r)\n"
+            "from tools.plugin_guard import scan_plugin\n"
+            "r = scan_plugin(Path(%r), source='golem-labs-etc/glance-hermes')\n"
+            "print(json.dumps({'verdict': getattr(r, 'verdict', '?'),\n"
+            "                  'n': len(getattr(r, 'findings', []) or [])}))\n"
+        )
+
+        def guard_verdict(target: Path):
+            proc = sp.run(
+                [_hermes_python(guard_dir), "-c", PROBE % (str(guard_dir), str(target))],
+                capture_output=True, text=True, cwd=str(guard_dir),
+            )
+            try:
+                return json.loads((proc.stdout or "").strip().splitlines()[-1])
+            except Exception:
+                return {"verdict": "?", "n": 0, "err": (proc.stderr or "")[:200]}
+
+        res = guard_verdict(mirror)
+        check(
+            "V17a the mirror tree is not dangerous to plugin_guard",
+            res["verdict"] not in ("dangerous", "?"),
+            f"verdict={res['verdict']}, {res['n']} finding(s), tests/ excluded={excluded}"
+            + (f" {res.get('err','')}" if res["verdict"] == "?" else ""),
+        )
+        # The other half of the property, and the reason the mirror exists: the
+        # same guard on the tree WITH tests is what refuses the subdirectory
+        # route. If this stops being true the README says something false.
+        res2 = guard_verdict(ADAPTER_DIR)
+        check(
+            "V17b the tree WITH tests is what the guard refuses",
+            res2["verdict"] == "dangerous",
+            f"verdict={res2['verdict']}, {res2['n']} finding(s)",
+        )
+
+    # ---- V18: the engine floor is a control, not a sentence ---------------
+    #
+    # 1.3.1 returns 1602 critical findings on a stock machine where 1.4.0
+    # returns 0. A README line cannot reach a user with an old global install.
+    print()
+    print("V18 an engine below MIN_ENGINE says so, once")
+
+    def report_stub(name: str, version: str, criticals: int = 0) -> Path:
+        # A scanner that exits 1 with a valid report at a chosen version.
+        findings = [
+            {"id": "%08x" % i, "category": "exfiltration_instruction",
+             "severity": "critical", "surface": "prompt",
+             "path": "/planted/%d.md" % i, "line": 1}
+            for i in range(criticals)
+        ]
+        doc = {"schema": 1, "engine_version": version, "policy": "strict",
+               "scanned_at": "2026-08-31T00:00:00Z", "total_scanned": 1,
+               "counts": {"critical": criticals, "high": 0, "medium": 0, "info": 0},
+               "warnings": [], "findings": findings}
+        q = bindir / name
+        q.write_text("#!/bin/sh\ncat <<'JSON'\n" + json.dumps(doc) + "\nJSON\nexit 1\n",
+                     encoding="utf-8")
+        q.chmod(0o755)
+        return q
+
+    old_home = tmp / "v18-old"
+    make_clean_tree(old_home)
+    use_home(old_home)
+    hooks.reset_for_tests()
+    saved_bin = runner.SCANNER_BIN
+    runner.SCANNER_BIN = str(report_stub("old-engine", "1.3.1"))
+    try:
+        runner.run_scan(old_home)
+        first = hooks.pre_llm_call(session_id="v18a")
+        said = (first or {}).get("context", "")
+        check(
+            "V18a an old engine is announced once, naming both versions",
+            bool(first) and "1.3.1" in said and runner.MIN_ENGINE in said,
+            repr(said.splitlines()[0]) if said else "no notice",
+        )
+        # The next call must not repeat it. It may legitimately return the
+        # first-run notice, which is a different message.
+        second = hooks.pre_llm_call(session_id="v18a")
+        repeated = "older than this adapter expects" in (second or {}).get("context", "")
+        check("V18b the engine notice does not repeat", not repeated)
+
+        hooks.reset_for_tests()
+        use_home(old_home)
+        after = hooks.pre_llm_call(session_id="v18c")
+        again = "older than this adapter expects" in (after or {}).get("context", "")
+        check("V18c and does not repeat after a restart", not again)
+    finally:
+        runner.SCANNER_BIN = saved_bin
+
+    if not scanner:
+        check("V18d", False, "scanner not on PATH")
+    else:
+        cur_home = tmp / "v18-current"
+        make_clean_tree(cur_home)
+        use_home(cur_home)
+        hooks.reset_for_tests()
+        runner.run_scan(cur_home)
+        outs = [hooks.pre_llm_call(session_id="v18d") for _ in range(3)]
+        fired = any("older than this adapter expects" in (o or {}).get("context", "")
+                    for o in outs)
+        cache = runner.get_cached(cur_home) or {}
+        check(
+            "V18d the shipped engine is at or above its own floor",
+            not fired and not runner.engine_below_floor(cache.get("engine_version")),
+            f"engine_version={cache.get('engine_version')} floor={runner.MIN_ENGINE}",
+        )
+
+    # ---- V19: the baseline sanity gate ------------------------------------
+    #
+    # The floor only catches engines already known to be bad. This catches an
+    # engine nobody has diagnosed yet: a critical count this large is far more
+    # likely to be a scanner fault than a machine in that much trouble, and
+    # filing it silently into a baseline is the one thing that must not happen.
+    print()
+    print("V19 an implausible first run says so, and still baselines")
+
+    big = runner.IMPLAUSIBLE_CRITICAL + 1
+    imp_home = tmp / "v19-implausible"
+    make_clean_tree(imp_home)
+    use_home(imp_home)
+    hooks.reset_for_tests()
+    saved_bin = runner.SCANNER_BIN
+    runner.SCANNER_BIN = str(report_stub("flood", runner.MIN_ENGINE, criticals=big))
+    try:
+        runner.run_scan(imp_home)
+        out = hooks.pre_llm_call(session_id="v19a")
+        said = (out or {}).get("context", "")
+        check(
+            "V19a the notice says the number is not plausible",
+            "not a plausible number" in said and str(big) in said,
+            f"{big} critical reported",
+        )
+        check(
+            "V19a it points at the pane before trust, not at an alarm",
+            "Check the Glance pane" in said and "compromis" not in said.lower(),
+            "doubt about the tool, not an alarm about the machine",
+        )
+        st = runner.stats(imp_home)
+        check(
+            "V19b it still baselines, and the chip stays green",
+            runner.has_baseline(imp_home) and st["baselined"] == big and st["new"] == 0,
+            f"{st['baselined']} baselined, {st['new']} new",
+        )
+    finally:
+        runner.SCANNER_BIN = saved_bin
+
+    # And the boundary: at the threshold exactly, nothing extra is said.
+    low_home = tmp / "v19-plausible"
+    make_clean_tree(low_home)
+    use_home(low_home)
+    hooks.reset_for_tests()
+    saved_bin = runner.SCANNER_BIN
+    runner.SCANNER_BIN = str(
+        report_stub("modest", runner.MIN_ENGINE, criticals=runner.IMPLAUSIBLE_CRITICAL)
+    )
+    try:
+        runner.run_scan(low_home)
+        out = hooks.pre_llm_call(session_id="v19c")
+        said = (out or {}).get("context", "")
+        check(
+            "V19c at the threshold exactly, no implausibility sentence",
+            bool(out) and "not a plausible number" not in said,
+            f"{runner.IMPLAUSIBLE_CRITICAL} critical is still reported normally",
+        )
+    finally:
+        runner.SCANNER_BIN = saved_bin
 
     # ---- V10: first-run baselining is visible, not silent ----------------
     #
@@ -792,7 +1036,8 @@ def run_all(tmp: Path, scanner) -> int:
 
 def report() -> int:
     print()
-    print(f"hermes adapter: {PASS}/{PASS + FAIL} passed on {sys.platform}")
+    tail = f", {SKIP} skipped ({', '.join(SKIPPED)})" if SKIP else ""
+    print(f"hermes adapter: {PASS}/{PASS + FAIL} passed on {sys.platform}{tail}")
     if FAIL:
         print("failed: " + ", ".join(FAILURES))
         return 1

@@ -30,7 +30,17 @@ sys.path.insert(0, str(REPO_ROOT / "adapters"))
 
 PASS = 0
 FAIL = 0
+SKIP = 0
 FAILURES = []
+SKIPPED = []
+
+
+def skip(label: str, reason: str) -> None:
+    """Not run, and not a failure. Hermes itself is not a dependency here."""
+    global SKIP
+    SKIP += 1
+    SKIPPED.append(label)
+    print(f"  skip  {label}  {reason}")
 
 
 def check(label: str, ok: bool, detail: str = "") -> None:
@@ -95,9 +105,9 @@ def run(home: Path) -> int:
         # Hermes itself is not installed here (e.g. the Linux container). That
         # is an environment limit, not a defect, and it is reported once as
         # such rather than twice as a failure.
-        check("V13-discovery", False,
-              f"SKIPPED: Hermes not importable here ({type(exc).__name__}); "
-              "run on a machine with Hermes installed")
+        skip("V13-discovery",
+             f"Hermes not importable here ({type(exc).__name__}); "
+             "the loader contract is asserted on a machine with Hermes")
         found = []
         hermes_available = False
 
@@ -233,7 +243,8 @@ def run(home: Path) -> int:
               "inside dashboard/ and a .js suffix, so serve_plugin_asset will serve it")
 
     print()
-    print(f"dashboard: {PASS}/{PASS + FAIL} passed on {sys.platform}")
+    tail = f", {SKIP} skipped ({', '.join(SKIPPED)})" if SKIP else ""
+    print(f"dashboard: {PASS}/{PASS + FAIL} passed on {sys.platform}{tail}")
     if FAIL:
         print("failed: " + ", ".join(FAILURES))
         return 1

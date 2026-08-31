@@ -93,7 +93,24 @@ def format_findings(findings: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def format_first_run_notice(total: int, critical: int) -> str:
+def format_engine_floor_notice(detail: str) -> str:
+    """The one-time notice that the installed engine is too old.
+
+    Same channel and same one-shot discipline as the others. It goes FIRST,
+    ahead of the first-run notice, because it changes how everything that
+    follows should be read: an engine below the floor is one whose findings are
+    known to be unreliable, and saying so after the baseline notice would be
+    saying it too late.
+    """
+    return (
+        "Glance: the installed scanner is older than this adapter expects. "
+        "Findings from it may be wrong in both directions.\n"
+        f"{detail}\n"
+        "This notice is sent once and will not repeat."
+    )
+
+
+def format_first_run_notice(total: int, critical: int, implausible: bool = False) -> str:
     """The one-time notice that a baseline was taken.
 
     Sent through the agent feed rather than left to the pane, because a new
@@ -107,9 +124,24 @@ def format_first_run_notice(total: int, critical: int) -> str:
     reply, and the baseline is already written.
     """
     s = "s" if total != 1 else ""
-    return (
+    head = (
         f"Glance: first scan on this machine. {total} existing finding{s} "
         f"recorded as the baseline, {critical} critical.\n"
+    )
+    if implausible:
+        # Said plainly, and said as doubt about the tool rather than as an
+        # alarm about the machine. A number this size is far more often a
+        # broken scanner than a machine in that much trouble, and a reader
+        # told "you are compromised" when the truth is "the tool is wrong"
+        # stops believing the tool the next time it is right.
+        head += (
+            f"{critical} critical findings on a first run is not a plausible "
+            "number. This is much more likely to be a scanner fault than a "
+            "machine in that much trouble.\n"
+            "Check the Glance pane before trusting anything this tool reports, "
+            "and check that `glance-scanner --version` is current.\n"
+        )
+    return head + (
         "These are not reported again. Nothing further will be raised unless "
         "something new appears after this point.\n"
         "Review them any time in the Glance pane of the Hermes dashboard, or "
@@ -164,7 +196,20 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> Optional[Dict[str, str]
     try:
         seen = _session_set(session_id)
 
-        # The first-run notice goes first and goes alone. On a first run every
+        # The engine floor goes ahead of everything. It is the frame for
+        # whatever follows: findings from an engine below the floor are known
+        # to be unreliable, and a baseline notice read before that fact is read
+        # wrongly.
+        stale_engine = runner.take_engine_floor_notice()
+        if stale_engine:
+            log.warning(
+                "glance: engine below floor, notice sent once to session %s: %s",
+                session_id or "(none)",
+                stale_engine,
+            )
+            return {"context": format_engine_floor_notice(stale_engine)}
+
+        # The first-run notice goes next, and goes alone. On a first run every
         # finding is already baselined, so `fresh` is empty and there is
         # nothing to crowd out. In the rare case where a rescan produced a new
         # finding before this turn, the notice still wins and the finding is
@@ -177,7 +222,11 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> Optional[Dict[str, str]
                 session_id or "(none)",
                 notice["total"],
             )
-            return {"context": format_first_run_notice(notice["total"], notice["critical"])}
+            return {
+                "context": format_first_run_notice(
+                    notice["total"], notice["critical"], notice.get("implausible", False)
+                )
+            }
 
         # Then the one-time scanner-missing notice. It cannot collide with the
         # first-run notice: no scanner means no scan, which means no baseline
