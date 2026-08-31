@@ -102,6 +102,26 @@ const POSITIVE = [
   // same gap.
   { id: 'P19', fixture: 'P19_unpinned_uvx.json', kind: 'inventory',
     want: { category: 'unpinned_remote_exec', severity: 'info' } },
+
+  // P20 closes the gap the changelog has been carrying since the real-machine
+  // scan: no positive fixture reached the fenced exfiltration path, and every
+  // other positive here puts its payload on ONE line.
+  //
+  // This one is a real shape. The `curl` is inside a fence, spans four lines
+  // with backslash continuations, and the source and destination are on
+  // different lines: line 20 names the credentials file, line 21 is the host.
+  // It therefore exercises the fence range, the continuation join, and the
+  // sensitive-source requirement at once -- the three things that were each
+  // wrong in a different way on the first real scan.
+  //
+  // Both policies, because the DIFFERENCE is the assertion. Balanced downgrades
+  // it to a medium `fenced_directive`; strict reports it as written. A single
+  // policy here would pass while the downgrade was broken, which is exactly
+  // what happened.
+  { id: 'P20a', fixture: 'P20_fenced_multiline_exfil.md', kind: 'prompt', policy: 'balanced',
+    want: { category: 'fenced_directive', severity: 'medium' } },
+  { id: 'P20b', fixture: 'P20_fenced_multiline_exfil.md', kind: 'prompt', policy: 'strict',
+    want: { category: 'exfiltration_instruction', severity: 'critical' } },
 ];
 
 const NEGATIVE = [
@@ -156,6 +176,33 @@ const NEGATIVE = [
   { id: 'N13', fixture: 'N13_high_entropy_prose.md', kind: 'prompt', policy: 'strict',
     rule: 'high-entropy token in prose is not a credential_leak (vendor shapes only)',
     check: (r) => !r.findings.some((x) => x.category === 'credential_leak') },
+
+  // N14 is P20 with the one ingredient that matters removed.
+  //
+  // Same shape: fenced, multi-line, backslash-continued `curl`, one of them a
+  // POST with a body, both to hosts this scanner has never heard of. The only
+  // difference is that nothing sensitive is being sent. If it fires, the rule
+  // is matching EGRESS rather than EXFILTRATION, which is what it did on the
+  // first real scan: `curl` to a public food API and a POST to a shop admin
+  // endpoint both came back critical.
+  //
+  // Documented network calls are what agent skills are made of. A rule that
+  // fires on them fires on almost every skill in a real install, so this pair
+  // is the boundary, and P20 is worth nothing without it.
+  //
+  // Measured, by removing the source requirement and rerunning: only the
+  // STRICT half fails. Under balanced the fence downgrade turns both calls
+  // into mediums, so `no critical, no high` stays true even with the rule
+  // broken. N14 alone would be a test that cannot fail for the reason it was
+  // written. It is kept because it pins the balanced path against a future
+  // change to the downgrade, but N14s is the one with teeth.
+  { id: 'N14', fixture: 'N14_documented_api_call.md', kind: 'prompt',
+    rule: 'documented API calls with no sensitive source are not exfiltration',
+    check: (r) => r.counts.critical === 0 && r.counts.high === 0
+      && !r.findings.some((x) => x.category === 'exfiltration_instruction') },
+  { id: 'N14s', fixture: 'N14_documented_api_call.md', kind: 'prompt', policy: 'strict',
+    rule: 'and still not, under strict',
+    check: (r) => r.counts.critical === 0 && r.counts.high === 0 },
 ];
 
 /**

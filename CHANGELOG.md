@@ -91,14 +91,30 @@ Seven defects, and one design gap.
   was reverted deliberately, no fixture failed -- the other narrowings kept the
   real files clean either way. The extent is now asserted directly.
 
-### Known gap
+### The gap that was here is closed
 
-There is no positive fixture for a fenced multi-line exfiltration, and none for
-a credential variable posted as data rather than as authentication. Both would
-prove the narrowings did not simply switch the rule off. Writing either
-requires a fixture carrying a working payload, and on the machine this was
-developed on the local guard's own secret-egress rule blocks the write. Stated
-here rather than left to be inferred from a green suite.
+An earlier draft of this entry recorded that there was no positive fixture for
+a fenced multi-line exfiltration, because writing one required a file carrying
+a working payload and the local guard's own secret-egress rule blocked the
+write. That rule was the thing at fault, it has been fixed, and the fixtures
+now exist.
+
+`P20_fenced_multiline_exfil.md` is a four-line backslash-continued `curl`
+inside a fence, uploading a credentials file, with the source on one line and
+the destination on the next. It asserts under BOTH policies, because the
+difference between them is the assertion: balanced downgrades it to a medium
+`fenced_directive`, strict reports it as `exfiltration_instruction` critical.
+Reverting the fence terminator makes it critical under balanced, which is
+exactly the symptom reported from the real machine.
+
+`N14_documented_api_call.md` is the same shape with the credentials file
+removed: two documented public API calls, fenced, multi-line, one a POST with a
+body. Removing the sensitive-source requirement makes its strict half fail,
+along with all three real Hermes fixtures.
+
+Still open: no positive fixture for a credential variable posted as data rather
+than as authentication. That boundary is held by the auth-exclusion logic and
+by R2, which contains 25 real authenticated API calls, but not by a positive.
 
 ### Numbers
 

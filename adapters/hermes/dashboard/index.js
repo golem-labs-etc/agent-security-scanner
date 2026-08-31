@@ -115,6 +115,44 @@
       )
     );
 
+    // The status chip counts NEW findings only.
+    //
+    // A machine whose findings were all present at install reads green, because
+    // nothing has changed since Glance started watching and a permanently red
+    // chip is a chip nobody looks at. The baselined tally sits beside it, plain
+    // and unalarming, so "green" never means "there is nothing here".
+    var newCounts = stats.new_counts || {};
+    var newTotal = stats.new || 0;
+    var alerting = (newCounts.critical || 0) + (newCounts.high || 0);
+    kids.push(
+      h(
+        "div",
+        {
+          key: "chip",
+          style: { display: "flex", gap: "0.5rem", alignItems: "baseline", flexWrap: "wrap" }
+        },
+        h(
+          "strong",
+          {
+            key: "new",
+            style: {
+              color: alerting
+                ? SEVERITY_COLOR.critical
+                : "var(--color-success, var(--color-muted, currentColor))"
+            }
+          },
+          newTotal + " new"
+        ),
+        stats.baselined
+          ? h(
+              "span",
+              { key: "sep", style: { color: "var(--color-muted, currentColor)" } },
+              "· " + stats.baselined + " baselined"
+            )
+          : null
+      )
+    );
+
     kids.push(
       h(
         "div",
@@ -129,15 +167,57 @@
       )
     );
 
-    if (stats.baselined) {
-      kids.push(
+    /** One section of findings. Location and category only; never evidence. */
+    function section(key, title, note, items) {
+      if (!items || !items.length) return null;
+      return h(
+        "div",
+        { key: key, style: { marginTop: "0.75rem" } },
+        h("h4", { key: "h", style: { margin: "0 0 0.25rem" } }, title + " (" + items.length + ")"),
+        note
+          ? h(
+              "p",
+              {
+                key: "n",
+                style: { margin: "0 0 0.4rem", color: "var(--color-muted, currentColor)", fontSize: "0.85em" }
+              },
+              note
+            )
+          : null,
         h(
-          "p",
-          { key: "base", style: { color: "var(--color-muted, currentColor)" } },
-          stats.baselined + " finding(s) baselined at first run and not reported."
+          "ul",
+          { key: "l", style: { margin: 0, paddingLeft: "1.1rem", fontSize: "0.9em" } },
+          items.map(function (f) {
+            var loc = f.path || "";
+            if (f.line) loc = loc + ":" + f.line;
+            return h(
+              "li",
+              { key: f.id || loc },
+              h("span", { style: { color: SEVERITY_COLOR[f.severity] } }, f.severity || ""),
+              " ",
+              h("span", { style: { color: categoryColor(categories, f.category) } }, f.category || ""),
+              " ",
+              loc
+            );
+          })
         )
       );
     }
+
+    kids.push(section("s-new", "New", null, stats.new_findings));
+
+    // Baselined findings stay on the page. They were present the first time
+    // Glance looked, so they are not announced to the agent -- but suppression
+    // from the agent feed is not deletion, and a tool that hid them would be
+    // building the blind spot it exists to prevent.
+    kids.push(
+      section(
+        "s-base",
+        "Baselined",
+        "Present at first scan, so not reported to the agent. Still here, still worth reading.",
+        stats.baselined_findings
+      )
+    );
 
     (stats.warnings || []).forEach(function (w, i) {
       kids.push(

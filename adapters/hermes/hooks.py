@@ -93,6 +93,31 @@ def format_findings(findings: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def format_first_run_notice(total: int, critical: int) -> str:
+    """The one-time notice that a baseline was taken.
+
+    Sent through the agent feed rather than left to the pane, because a new
+    user may never open the pane, and the alternative is a security tool that
+    files what it found on install into a permanent blind spot without ever
+    saying so.
+
+    Carries counts and nothing else: no paths, no categories beyond the
+    critical tally, no evidence. It is a pointer to where the detail lives,
+    not the detail. This is NOT an acknowledgement step -- nothing waits on a
+    reply, and the baseline is already written.
+    """
+    s = "s" if total != 1 else ""
+    return (
+        f"Glance: first scan on this machine. {total} existing finding{s} "
+        f"recorded as the baseline, {critical} critical.\n"
+        "These are not reported again. Nothing further will be raised unless "
+        "something new appears after this point.\n"
+        "Review them any time in the Glance pane of the Hermes dashboard, or "
+        "run `glance-scanner surfaces`.\n"
+        "This notice is sent once and will not repeat."
+    )
+
+
 # ------------------------------------------------------------------- hooks
 
 def on_session_start(session_id: str = "", **kwargs: Any) -> None:
@@ -116,6 +141,22 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> Optional[Dict[str, str]
     """
     try:
         seen = _session_set(session_id)
+
+        # The first-run notice goes first and goes alone. On a first run every
+        # finding is already baselined, so `fresh` is empty and there is
+        # nothing to crowd out. In the rare case where a rescan produced a new
+        # finding before this turn, the notice still wins and the finding is
+        # announced on the next turn -- it is deliberately NOT marked as seen
+        # below, so nothing is lost by deferring it one turn.
+        notice = runner.take_first_run_notice()
+        if notice:
+            log.info(
+                "glance: first-run baseline notice to session %s (%d baselined)",
+                session_id or "(none)",
+                notice["total"],
+            )
+            return {"context": format_first_run_notice(notice["total"], notice["critical"])}
+
         fresh = runner.new_findings(seen)
         if not fresh:
             return None

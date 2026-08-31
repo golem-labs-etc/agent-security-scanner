@@ -136,6 +136,75 @@ def has_baseline(home: Optional[Path] = None) -> bool:
     return _baseline_path(home).exists()
 
 
+def take_first_run_notice(home: Optional[Path] = None) -> Optional[Dict[str, int]]:
+    """Claim the one-time first-run notice, or return None.
+
+    Returns its payload exactly once per machine and clears the flag on disk
+    before returning, so a crash between the claim and the announcement loses
+    the notice rather than repeating it. Losing it is the better failure: the
+    findings are still in the pane, whereas an agent told the same thing every
+    session learns to skip the message.
+
+    Persisted rather than held in memory because "once" has to survive a
+    restart, which is the fourth test.
+    """
+    path = _baseline_path(home)
+    doc = _read_json(path)
+    if not doc or not doc.get("notice_pending"):
+        return None
+    payload = {
+        "total": int(doc.get("notice_total") or 0),
+        "critical": int(doc.get("notice_critical") or 0),
+    }
+    doc["notice_pending"] = False
+    try:
+        _write_json_atomic(path, doc)
+    except Exception:
+        # Could not clear the flag. Say nothing rather than risk saying it on
+        # every turn: an unclearable flag would otherwise repeat forever.
+        return None
+    return payload
+
+
+# Fields the pane is allowed to see. A whitelist, not a blacklist: the scanner
+# omits matched text by default, and this makes the dashboard's guarantee
+# independent of that default holding.
+_PANE_FIELDS = ("id", "severity", "category", "path", "line", "end_line", "surface")
+
+
+def _for_pane(f: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: f[k] for k in _PANE_FIELDS if k in f}
+
+
+def findings_by_baseline(home: Optional[Path] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """Split the cached findings into new and baselined, for the pane.
+
+    Every severity, unlike `new_findings`, which is the agent path and stops at
+    critical and high. Entering the baseline suppresses a finding from the
+    agent feed; it does not remove it from the machine, and the person looking
+    at the pane is entitled to the whole list.
+    """
+    cache = get_cached(home) or {}
+    base = baseline_ids(home)
+    new: List[Dict[str, Any]] = []
+    old: List[Dict[str, Any]] = []
+    order = {s: i for i, s in enumerate(("critical", "high", "medium", "info"))}
+    for f in cache.get("findings", []):
+        (old if f.get("id") in base else new).append(_for_pane(f))
+    for bucket in (new, old):
+        bucket.sort(key=lambda f: (order.get(f.get("severity"), 9), f.get("path", ""), f.get("line") or 0))
+    return {"new": new, "baselined": old}
+
+
+def _tally(findings: List[Dict[str, Any]]) -> Dict[str, int]:
+    out = {"critical": 0, "high": 0, "medium": 0, "info": 0}
+    for f in findings:
+        sev = f.get("severity")
+        if sev in out:
+            out[sev] += 1
+    return out
+
+
 # --------------------------------------------------------- error reporting
 #
 # There are four distinct ways a scan run fails and they need four distinct
@@ -341,12 +410,31 @@ def run_scan(home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     # First look ever: record what was already here and alert on none of it.
     # A tool that is red on install teaches people to ignore it.
     if not has_baseline(root):
+        ids = sorted({f["id"] for f in cache["findings"] if "id" in f})
+        critical = sum(1 for f in cache["findings"] if f.get("severity") == "critical")
+        # What the baseline actually SUPPRESSED: findings the agent would
+        # otherwise have been told about. `info` and `medium` never reach the
+        # agent feed at all, so baselining them hides nothing and is not worth
+        # a notice -- an ordinary install has a couple of `npx -y` info
+        # findings, and a notice on those trains the reader to skip it.
+        suppressed = sum(1 for f in cache["findings"] if f.get("severity") in AGENT_SEVERITIES)
         _write_json_atomic(
             _baseline_path(root),
             {
                 "created_at": cache["scanned_at"],
                 "digest": digest,
-                "ids": sorted({f["id"] for f in cache["findings"] if "id" in f}),
+                "ids": ids,
+                # The agent is told ONCE that this happened. Without it, a user
+                # installing onto an already-compromised machine has that
+                # finding filed into the baseline before they ever see it, and
+                # nothing mentions it again: the security tool would create a
+                # permanent blind spot at install time, silently.
+                #
+                # Pending only when the baseline actually took something out of
+                # the agent feed. A clean tree says nothing.
+                "notice_pending": suppressed > 0,
+                "notice_total": len(ids),
+                "notice_critical": critical,
             },
         )
 
@@ -442,6 +530,7 @@ def new_findings(session_announced: set, home: Optional[Path] = None) -> List[Di
 def stats(home: Optional[Path] = None) -> Dict[str, Any]:
     """Counts and digest for the dashboard. Cache reads only, never a scan."""
     cache = get_cached(home) or {}
+    split = findings_by_baseline(home)
     with _state.lock:
         scanning = _state.scanning
         last_error = _state.last_error
@@ -453,6 +542,14 @@ def stats(home: Optional[Path] = None) -> Dict[str, Any]:
         "counts": cache.get("counts", {"critical": 0, "high": 0, "medium": 0, "info": 0}),
         "total_scanned": cache.get("total_scanned", 0),
         "baselined": len(baseline_ids(home)),
+        # Both sides, always. The status chip is built from `new_counts` alone,
+        # so a machine whose only findings are baselined reads green -- but the
+        # baselined set stays on the page next to it rather than disappearing.
+        "new_counts": _tally(split["new"]),
+        "baselined_counts": _tally(split["baselined"]),
+        "new": len(split["new"]),
+        "new_findings": split["new"],
+        "baselined_findings": split["baselined"],
         "warnings": cache.get("warnings", []),
         "scanning": scanning,
         "last_error": last_error,

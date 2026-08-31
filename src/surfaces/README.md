@@ -380,12 +380,37 @@ line and one line of body and no more -- no fixture failed, because the other
 narrowings kept the real files clean either way. The check asserts the extent
 directly, on inert content.
 
+### The fenced-exfiltration pair
+
+`P20_fenced_multiline_exfil.md` and `N14_documented_api_call.md` are the same
+shape with one ingredient different, and they are only worth anything as a
+pair. Both are fenced, multi-line, backslash-continued `curl` calls to hosts
+this scanner has never seen. P20 uploads a credentials file; N14 does not send
+anything sensitive at all.
+
+P20 asserts under **both** policies, because the difference is the assertion:
+balanced downgrades it to `fenced_directive`/medium, strict reports it as
+`exfiltration_instruction`/critical. Its source is on line 20 and its
+destination on line 21, so it exercises the fence range, the continuation join
+and the sensitive-source requirement together -- the three things that were
+each wrong in a different way on the first real scan.
+
+Measured teeth, by reverting one fix at a time in `dist/` and rerunning:
+
+| reverted | what fails |
+|---|---|
+| fence terminator | P20a reports critical under balanced, and FENCE |
+| sensitive-source requirement | N14s, R1s, R2s, R3s |
+
+Only the strict half of N14 has teeth. Under balanced the fence downgrade turns
+both calls into mediums, so "no critical, no high" stays true even with the rule
+broken. N14 is kept to pin the balanced path against a future change to the
+downgrade, but N14s is the one doing the work, and that is worth knowing before
+trusting it.
+
 ### Known gap
 
-There is no positive fixture for a *fenced* multi-line exfiltration, and none
-for a credential variable posted as data rather than as authentication. Both
-would prove the narrowings above did not simply switch the rule off. Writing
-them requires a fixture that carries a working payload, and on the machine this
-was developed on the local guard's own secret-egress rule blocks the write. The
-gap is recorded here rather than left for someone to discover from a green
-suite.
+No positive fixture for a credential variable posted as data rather than as
+authentication. That boundary is currently held by the auth-exclusion logic and
+by R2, which carries 25 real authenticated API calls, but not by a positive
+that would fail if the exclusion were widened too far.
