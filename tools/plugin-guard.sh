@@ -22,8 +22,19 @@ git init -q
 git remote add origin https://github.com/NousResearch/hermes-agent.git
 git config core.sparseCheckout true
 printf 'tools/\n' > .git/info/sparse-checkout
-# --filter=blob:none keeps the fetch to the blobs the sparse checkout needs.
-git fetch -q --depth 1 --filter=blob:none origin "$REV"
+# Three attempts, cheapest first, because the cheapest is the one that varies.
+# `--filter` on a repo created by `git init` needs the remote marked as a
+# promisor, and whether git does that for you depends on the git version: it
+# works on a developer laptop and exits 128 on a GitHub runner. That failure
+# cost a CI round trip, so the fallback is explicit rather than assumed.
+if   git fetch -q --depth 1 --filter=blob:none origin "$REV" 2>/dev/null; then :
+elif git fetch -q --depth 1 origin "$REV" 2>/dev/null; then :
+elif git fetch -q origin "$REV" 2>/dev/null; then :
+else
+  echo "plugin_guard: could not fetch ${REV} from NousResearch/hermes-agent." >&2
+  echo "  Network, or the pinned commit no longer exists upstream." >&2
+  exit 1
+fi
 git checkout -q FETCH_HEAD
 ACTUAL="$(git rev-parse HEAD)"
 
