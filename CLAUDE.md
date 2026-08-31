@@ -119,4 +119,4 @@ leaked material and lost work. Rules:
 - **If the tree is in a state you did not create**, say so and stop. Do not
   reconcile it silently.
 
-Full reasoning: `COORDINATION.md`.
+Full reasoning: `COORDINATION.md` in glance-guard.
