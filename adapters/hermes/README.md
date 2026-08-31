@@ -189,10 +189,105 @@ rather than by maintenance: there is no second list here to forget to update,
 not even as a fallback, because a fallback list is a second copy and a second
 copy drifts.
 
+## Installing
+
+This adapter is published as its own repository,
+[`golem-labs-etc/glance-hermes`](https://github.com/golem-labs-etc/glance-hermes),
+because `hermes plugins install owner/repo` has no subdirectory support and
+plugins are discovered at `~/.hermes/plugins/<name>/`. Nothing can install a
+plugin that lives at `adapters/hermes/` inside a monorepo, so the contents of
+this directory are mirrored to the root of that repository.
+
+**Install a tag, not a branch.**
+
+```
+hermes plugins install golem-labs-etc/glance-hermes@v0.1.0
+```
+
+Then confirm what it registered:
+
+```
+hermes plugins capabilities glance-surfaces
+```
+
+### Hermes verifies nothing about what it installs
+
+Say this plainly rather than leaving it implied: Hermes performs **no signature
+checking, no checksum verification and no version pinning** of any kind. It
+fetches what the name resolves to and runs it. Installing a branch means
+installing whatever that branch says today.
+
+That is why every release is tagged and why each one publishes a SHA-256
+checksum of its own tree. The verification is yours to do, and the checksum is
+there so that it is possible at all:
+
+Every release attaches `CHECKSUMS.txt`, a SHA-256 per file. To check an
+install against it:
+
+```
+cd ~/.hermes/plugins/glance-surfaces
+curl -sSLO https://github.com/golem-labs-etc/glance-hermes/releases/download/v0.1.0/CHECKSUMS.txt
+shasum -a 256 -c CHECKSUMS.txt        # macOS
+sha256sum -c CHECKSUMS.txt            # Linux
+```
+
+Both tools read the same file. `__pycache__` is generated after install and is
+not listed, so ignore any `FAILED open or read` for a `.pyc`. Anything else
+that fails means the tree is not what was released: remove the plugin and say
+so publicly.
+
 ## Requirements
 
-`glance-scanner` on `PATH` (or `GLANCE_SCANNER_BIN` pointing at it). Without it
-the adapter reports that it is not scanning rather than pretending to.
+**`glance-scanner` >= 1.3.1**, on `PATH` or named by `GLANCE_SCANNER_BIN`. The
+version floor is not caution: the `surfaces` command **does not exist** before
+1.3.1. Against an older scanner every scan fails with "not on PATH" or an
+unparseable-output error, and the adapter reports that it is not scanning
+rather than pretending to.
+
+```
+npm install -g glance-scanner
+glance-scanner --version
+```
+
+**semgrep is not required.** It is needed only by `glance-scanner analyze`,
+which scans application code. This adapter runs `surfaces` only, which reads
+skill files and MCP configuration and never invokes semgrep.
+
+The scanner is a prerequisite and is deliberately **not vendored** into the
+mirror. A security tool that ships a second copy of its own engine has two
+versions to keep honest, and the older one is the one that will be running.
+
+## What this adapter can and cannot do
+
+It **sees and reports**. It **cannot block anything**.
+
+Hermes can block, through `pre_tool_call`. This adapter does not implement that
+hook, and blocking is the guard, which is a separate and non-MIT product. What
+happens here is: a background scan, then a message to the agent naming a
+category, a path, a line and an id. The agent may pass that on to a person. An
+instruction to an agent is not a control, and the bundled skill says so in as
+many words.
+
+If you install this expecting something to be stopped, nothing will be.
+
+### It declares no tools and holds no capabilities
+
+Not a promise, a checkable claim:
+
+```
+hermes plugins capabilities glance-surfaces
+```
+
+On a machine with it installed, that prints:
+
+```
+glance-surfaces (user)
+  declared: (none)
+```
+
+`plugin.yaml` declares four hooks and nothing else: no tools, no capabilities,
+no MCP servers. The hooks read a cache and return; the only process this
+adapter ever spawns is `glance-scanner` itself, on a background thread.
 
 ## When a scan fails, the message says which failure it was
 

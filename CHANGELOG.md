@@ -109,8 +109,14 @@ exactly the symptom reported from the real machine.
 
 `N14_documented_api_call.md` is the same shape with the credentials file
 removed: two documented public API calls, fenced, multi-line, one a POST with a
-body. Removing the sensitive-source requirement makes its strict half fail,
-along with all three real Hermes fixtures.
+body. Removing the sensitive-source requirement fails both of its halves and
+all three real Hermes fixtures.
+
+Its balanced half asserts no findings at all, which took two attempts to get
+right. `no critical, no high` does not fail when the rule breaks, because the
+fence downgrade turns both calls into mediums. Nor does `no
+exfiltration_instruction`, because the downgrade renames the category, so the
+broken rule appears as `fenced_directive` and a category check never sees it.
 
 Still open: no positive fixture for a credential variable posted as data rather
 than as authentication. That boundary is held by the auth-exclusion logic and

@@ -400,13 +400,19 @@ Measured teeth, by reverting one fix at a time in `dist/` and rerunning:
 | reverted | what fails |
 |---|---|
 | fence terminator | P20a reports critical under balanced, and FENCE |
-| sensitive-source requirement | N14s, R1s, R2s, R3s |
+| sensitive-source requirement | N14, N14s, R1s, R2s, R3s |
 
-Only the strict half of N14 has teeth. Under balanced the fence downgrade turns
-both calls into mediums, so "no critical, no high" stays true even with the rule
-broken. N14 is kept to pin the balanced path against a future change to the
-downgrade, but N14s is the one doing the work, and that is worth knowing before
-trusting it.
+Both halves of N14 bite, but only after the assertions were tightened, and the
+way the first two attempts failed is worth keeping.
+
+`no critical, no high` does not work under balanced: with the rule broken, the
+fence downgrade turns both calls into mediums and the count assertion stays
+true. `no exfiltration_instruction` is the obvious repair and is also wrong,
+because the downgrade **renames** the category, so a broken rule surfaces as
+`fenced_directive`/medium and a check on the exfiltration category never sees
+it. The balanced half therefore asserts **no findings at all**, which is the
+correct expectation for a clean documentation file and the only assertion here
+that fails when the rule does.
 
 ### Known gap
 

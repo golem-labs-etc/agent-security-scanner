@@ -1,0 +1,206 @@
+# Publish adapters/hermes/ to golem-labs-etc/glance-hermes.
+#
+# WHY THIS EXISTS
+#
+# `hermes plugins install owner/repo` has no subdirectory support, and plugins
+# are discovered at ~/.hermes/plugins/<name>/. The adapter lives at
+# adapters/hermes/ in this monorepo, so no command anyone can type installs it.
+# The mirror's ROOT is the contents of that directory, which is the only layout
+# the installer can consume.
+#
+# THE MIRROR IS GENERATED OUTPUT. Never edit it directly: the next push to main
+# overwrites it wholesale, and an edit made there is lost without a trace. The
+# README the mirror carries says so on its first line.
+#
+# WHAT IS EXCLUDED, AND WHY IT IS NOT THE OBVIOUS REASON
+#
+#   __pycache__/   build artefact
+#   tests/         see below
+#
+# The reason to look at for tests was: the installed plugin lives inside
+# ~/.hermes, which is the tree Glance scans, so if the tests carry attack-shaped
+# strings inline then installing the plugin plants findings the plugin then
+# reports. The first half is TRUE -- test_adapter.py contains five
+# instruction-override strings and an id_rsa exfiltration line, deliberately.
+#
+# The second half is FALSE, and it was measured rather than assumed. discover.py
+# collects prompt surfaces named SKILL.md or plugin.yaml only, and returns
+# code_files: []. A .py file is never a scanned surface. Installing the full
+# adapter into a Hermes tree and scanning it returns 0 critical, 0 high, 0
+# medium, 0 info under both policies, identical with and without tests/, and the
+# only two files picked up are plugin.yaml and skills/glance-security/SKILL.md.
+#
+# tests/ is excluded for a different and duller reason: it does not work there.
+# Both test files resolve imports as REPO_ROOT/adapters where REPO_ROOT is two
+# levels above the adapter directory. In the mirror the adapter IS the root, so
+# that path points outside the repository and `import hermes` fails. Shipping a
+# suite that cannot run is worse than shipping none, because a green-looking
+# directory implies a check nobody performed.
+#
+# Either way the tests stay in this repo, public and MIT. Nothing is hidden by
+# their absence from the mirror; the monorepo is where they are meant to run.
+#
+# SETUP REQUIRED ONCE, BY A PERSON
+#
+# This workflow needs MIRROR_TOKEN: a fine-grained PAT with Contents: read and
+# write on golem-labs-etc/glance-hermes ONLY. Until that secret exists the job
+# fails loudly on its first step rather than pushing nothing and reporting
+# success. GITHUB_TOKEN cannot be used: it is scoped to this repository.
+
+name: mirror
+
+on:
+  push:
+    # Both filters, so either fires. Deliberately NO `paths:` filter: a `paths`
+    # filter is evaluated against the pushed commit, so tagging a commit that
+    # did not itself touch adapters/hermes/ would silently skip the release --
+    # which is most releases. The job is a copy and a push; running it on every
+    # main push is cheaper than the failure mode of not running it.
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail here, with a sentence a person can act on, rather than three steps
+      # later with a git authentication error.
+      - name: Require the mirror token
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "::error::MIRROR_TOKEN is not set. Create a fine-grained PAT with"
+            echo "::error::Contents read+write on golem-labs-etc/glance-hermes only,"
+            echo "::error::then add it as a repository secret named MIRROR_TOKEN."
+            exit 1
+          fi
+
+      - name: Build the mirror tree
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/mirror && mkdir -p /tmp/mirror
+          # -a preserves nothing that matters here but keeps the copy simple.
+          # --delete is NOT used against the working copy: /tmp/mirror is fresh.
+          rsync -a \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='tests/' \
+            adapters/hermes/ /tmp/mirror/
+          echo "files in the mirror tree:"
+          find /tmp/mirror -type f | sort | sed 's|/tmp/mirror/|  |'
+
+      # The notice is the FIRST line of the mirror's README, before the title,
+      # so it is the first thing a reader and a PR author both see.
+      - name: Prepend the generated-from notice
+        run: |
+          set -euo pipefail
+          SRC="adapters/hermes/README.md"
+          {
+            echo "> **This repository is generated. Do not edit it.**"
+            echo "> Its source is [\`adapters/hermes/\`](https://github.com/golem-labs-etc/agent-security-scanner/tree/main/adapters/hermes)"
+            echo "> in \`golem-labs-etc/agent-security-scanner\`, and every push to \`main\`"
+            echo "> there overwrites everything here. **Pull requests opened against this"
+            echo "> repository will be closed unmerged** -- open them against the source"
+            echo "> repository instead, where the tests live and run."
+            echo ""
+            echo "<!-- generated from adapters/hermes/ at ${GITHUB_SHA} -->"
+            echo ""
+            # Relative links leave the repository once this file is at a root
+            # two levels shallower, so rewrite them to absolute source URLs.
+            # `../../x` resolves against the monorepo root by construction.
+            sed -E 's#\]\(\.\./\.\./#](https://github.com/golem-labs-etc/agent-security-scanner/tree/main/#g' "$SRC"
+          } > /tmp/mirror/README.md
+          head -8 /tmp/mirror/README.md
+          echo "checking no relative link survived:"
+          if grep -nE '\]\(\.\.?/' /tmp/mirror/README.md; then
+            echo "::error::a relative link would be broken in the mirror"
+            exit 1
+          fi
+          echo "  none"
+
+      # Published so that verification is possible at all. Hermes checks
+      # nothing about what it installs, so this is the only artefact a user can
+      # compare against.
+      - name: Write CHECKSUMS.txt
+        run: |
+          set -euo pipefail
+          cd /tmp/mirror
+          # `sha256sum` on the runner and `shasum -a 256` on macOS emit the
+          # same two-column format, so one file verifies with either tool.
+          # Paths stay relative with a leading ./ so `-c` works from the
+          # install directory without editing.
+          find . -type f -not -name CHECKSUMS.txt | sort | xargs sha256sum > CHECKSUMS.txt
+          echo "tree digest: $(sha256sum CHECKSUMS.txt | cut -d' ' -f1)"
+          cat CHECKSUMS.txt
+
+      - name: Push to the mirror
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd /tmp/mirror
+          git init -q
+          git config user.name "Golem Labs"
+          git config user.email "golem@forwardemail.net"
+          git add -A
+          git commit -q \
+            -m "Sync from agent-security-scanner@${GITHUB_SHA}" \
+            -m "Generated from adapters/hermes/. Do not edit this repository directly." \
+            -m "Source: https://github.com/golem-labs-etc/agent-security-scanner/commit/${GITHUB_SHA}"
+          # Force-push a single-commit history on purpose. The mirror is
+          # output, not a branch anyone develops on, and preserving a fake
+          # history here would invite someone to treat it as real.
+          git push -q --force \
+            "https://x-access-token:${MIRROR_TOKEN}@github.com/golem-labs-etc/glance-hermes.git" \
+            HEAD:refs/heads/main
+
+      # A tag on this repo becomes a tag on the mirror, because a tag is what
+      # the README tells people to install.
+      - name: Mirror the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd /tmp/mirror
+          TAG="${GITHUB_REF#refs/tags/}"
+          git tag -a "$TAG" -m "$TAG"
+          git push -q --force \
+            "https://x-access-token:${MIRROR_TOKEN}@github.com/golem-labs-etc/glance-hermes.git" \
+            "refs/tags/$TAG"
+
+      - name: Publish the release and its checksums
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          DIGEST=$(sha256sum /tmp/mirror/CHECKSUMS.txt | cut -d' ' -f1)
+          gh release create "$TAG" \
+            --repo golem-labs-etc/glance-hermes \
+            --title "$TAG" \
+            --notes "Generated from \`adapters/hermes/\` at ${GITHUB_SHA}.
+
+          Install this tag, not a branch:
+
+              hermes plugins install golem-labs-etc/glance-hermes@${TAG}
+
+          Hermes performs no signature checking, no checksum verification and no
+          version pinning. \`CHECKSUMS.txt\` is attached so that verification is
+          possible at all; it is not performed for you.
+
+          SHA-256 of CHECKSUMS.txt: \`${DIGEST}\`" \
+            /tmp/mirror/CHECKSUMS.txt
