@@ -1,0 +1,65 @@
+# Does the guard a stranger actually runs still agree with the one we pinned?
+#
+# The CI gate runs plugin_guard at a pinned Hermes commit, so the build is
+# deterministic and an upstream change cannot break it on a day nothing here
+# changed. That determinism has a cost: the pinned guard is not the guard
+# anyone installing the plugin runs. They run whatever Hermes ships today.
+#
+# This job closes that gap without reintroducing the flakiness. It runs the
+# same script against upstream HEAD, weekly, and fails loudly when the verdict
+# differs from the pinned run. A failure here is not a broken build; it is a
+# message that the world moved and someone should look.
+name: guard drift
+
+on:
+  schedule:
+    # Mondays, 09:00 UTC. Weekly because plugin_guard is a detection ruleset in
+    # someone else's repository, which changes on the scale of releases.
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+
+      - name: Verdict at the pinned commit
+        id: pinned
+        run: |
+          set -euo pipefail
+          ./tools/plugin-guard.sh | tee /tmp/pinned.txt
+          # Compare the VERDICTS, not the finding counts. A count changes when
+          # upstream tunes a rule or when this adapter gains a file, and
+          # failing on that would train everyone to ignore this job. What
+          # matters is whether the mirror still installs and whether the tree
+          # with tests is still what gets refused.
+          sed -E 's/.*(mirror=[a-z?]+).*(with-tests=[a-z?]+).*/\1 \2/' /tmp/pinned.txt > /tmp/pinned.key
+          cat /tmp/pinned.key
+
+      - name: Verdict at upstream HEAD
+        id: head
+        run: |
+          set -euo pipefail
+          ./tools/plugin-guard.sh --head | tee /tmp/head.txt || true
+          sed -E 's/.*(mirror=[a-z?]+).*(with-tests=[a-z?]+).*/\1 \2/' /tmp/head.txt > /tmp/head.key
+          cat /tmp/head.key
+
+      - name: Fail if they disagree
+        run: |
+          set -euo pipefail
+          if diff -u /tmp/pinned.key /tmp/head.key; then
+            echo "No drift. The pinned guard and upstream HEAD agree."
+            exit 0
+          fi
+          echo "::error::plugin_guard at upstream HEAD disagrees with the pinned commit."
+          echo "::error::pinned: $(cat /tmp/pinned.key)"
+          echo "::error::HEAD:   $(cat /tmp/head.key)"
+          echo "::error::A stranger installing the plugin runs HEAD, not our pin."
+          echo "::error::If mirror= turned dangerous, public installs are BLOCKED now."
+          echo "::error::If with-tests= stopped being dangerous, the documented"
+          echo "::error::reason the mirror exists is no longer true."
+          echo "::error::Investigate, then bump HERMES_PIN in tools/plugin-guard-pin.txt."
+          exit 1

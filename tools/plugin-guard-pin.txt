@@ -1,0 +1,21 @@
+# The Hermes commit whose plugin_guard gates this repository's CI.
+#
+# WHY A PIN. `hermes plugins install` runs tools/plugin_guard.py over a plugin
+# before it will install it. A dangerous verdict blocks the install outright and
+# --force does not override it, so this verdict is load-bearing for every public
+# install of golem-labs-etc/glance-hermes. It was verified only when somebody
+# ran the suite on a laptop with Hermes on it.
+#
+# The gate uses THIS commit so the build is deterministic: an upstream change
+# must never break a build on a day nothing here changed. The weekly drift
+# watcher runs the same guard against upstream HEAD and fails loudly when the
+# verdict differs, which is the signal to come and look.
+#
+# Upstream: https://github.com/NousResearch/hermes-agent (MIT, Nous Research)
+# Only tools/ is fetched. plugin_guard.py imports pathlib, typing and
+# tools/skills_guard.py; skills_guard imports nothing outside the standard
+# library. No Hermes install, no venv, no dependency resolution.
+#
+# TO BUMP: change the SHA below, run the guard locally, confirm the mirror tree
+# is still not dangerous, and say in the commit message what changed upstream.
+HERMES_PIN=26f178e5fa78c691cadf847058ef1d55a707bfb0
