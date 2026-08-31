@@ -155,10 +155,22 @@ inside them. Run `glance-scanner surfaces --evidence` to inspect.
 No evidence, no matched text, no file content, ever. A finding is announced
 once per session, not once per turn.
 
-Two one-time notices use the same channel, each sent once per machine and
-marked as spent on disk so a restart does not repeat them. The first says a
-baseline was taken and how much it covers. The second says the adapter is not
-scanning at all:
+Three one-time notices use the same channel, each sent once per machine and
+marked as spent on disk so a restart does not repeat them. In precedence order:
+the engine is older than `MIN_ENGINE`; a baseline was taken and how much it
+covers; the adapter is not scanning at all. The engine notice goes first
+because it is the frame for the other two -- findings from an engine below the
+floor are known to be unreliable, and a baseline notice read before that fact
+is read wrongly.
+
+The first-run notice gains a sentence when the critical count is implausible
+(`runner.IMPLAUSIBLE_CRITICAL`, currently 25). It still baselines: a tool that
+is red on install teaches people to ignore it. But it says plainly that a
+number that size is far more likely to be a scanner fault than a machine in
+that much trouble, and that the pane must be checked before the tool is
+trusted. The evidence behind 25 is in the constant's own comment.
+
+The scanner-missing notice:
 
 ```
 Glance: not scanning. No findings are being produced, and silence from this
@@ -287,11 +299,19 @@ not what was released: remove the plugin and say so publicly.
 
 ## Requirements
 
-**`glance-scanner` >= 1.3.1**, on `PATH` or named by `GLANCE_SCANNER_BIN`. The
-version floor is not caution: the `surfaces` command **does not exist** before
-1.3.1. Against an older scanner every scan fails with "not on PATH" or an
-unparseable-output error, and the adapter reports that it is not scanning
-rather than pretending to.
+**`glance-scanner` >= 1.4.0**, on `PATH` or named by `GLANCE_SCANNER_BIN`.
+
+Two separate reasons, and neither is caution. The `surfaces` command **does not
+exist** before 1.3.1, so an older scanner fails every scan outright. And 1.3.1
+itself returns **1602 critical findings on a stock machine where 1.4.0 returns
+0**, every one of them wrong. An adapter that presented that output as a
+baseline would file 1602 false criticals on install and then report clean
+forever.
+
+The floor is enforced in code, not by this paragraph. `runner.MIN_ENGINE` is
+checked against the `engine_version` in every report, and an engine below it
+gets a one-time notice through the agent feed naming both versions. A README
+line cannot reach someone who installed the scanner globally a month ago.
 
 ```
 npm install -g glance-scanner

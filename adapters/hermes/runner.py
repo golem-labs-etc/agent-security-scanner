@@ -39,6 +39,37 @@ AGENT_SEVERITIES = ("critical", "high")
 
 SCANNER_BIN = os.environ.get("GLANCE_SCANNER_BIN", "glance-scanner")
 
+# The oldest engine whose output this adapter is willing to present without
+# saying something. Below this the scanner is not merely missing features: on a
+# stock machine 1.3.1 returns 1602 critical findings under this policy where
+# 1.4.0 returns 0, and every one of the 1602 is wrong. A README line cannot
+# reach a user with an old global install. This can.
+MIN_ENGINE = "1.4.0"
+
+# Above this many critical findings on a FIRST run, the notice says the number
+# is implausible and the pane must be checked before the tool is trusted. The
+# baseline is still written -- a security tool that is red on install teaches
+# people to ignore it, and refusing to baseline would do that.
+#
+# 25, and the evidence for it. Findings are deduplicated by content, so one
+# planted file is one finding no matter how many profiles carry it, and this
+# number does not grow with the size of the tree:
+#
+#   a real stock machine, 1904 prompt files, good engine     0 critical
+#   the same machine, 1.3.1                               1602 critical
+#   this adapter installed from the mirror                   0 critical
+#   the suite's clean tree                                   0 critical
+#   the suite's deliberately hostile tree, 5 files            5 critical
+#
+# The worst tree we construct on purpose reaches 5. Nothing legitimate has ever
+# reached double figures. A broken engine reached 1602. 25 is five times the
+# constructed worst case and one sixty-fourth of the observed failure, so it
+# sits in an empty band -- high enough that a genuine compromise, which plants
+# a handful of distinct files, is reported as a compromise rather than as a
+# malfunction, and low enough that any engine defect of the 1.3.1 class trips
+# it immediately.
+IMPLAUSIBLE_CRITICAL = 25
+
 _LOCK_STALE_SECONDS = 300
 _SCAN_TIMEOUT_SECONDS = 180
 
@@ -165,6 +196,7 @@ def take_first_run_notice(home: Optional[Path] = None) -> Optional[Dict[str, int
     payload = {
         "total": int(doc.get("notice_total") or 0),
         "critical": int(doc.get("notice_critical") or 0),
+        "implausible": bool(doc.get("notice_implausible")),
     }
     doc["notice_pending"] = False
     try:
@@ -176,51 +208,91 @@ def take_first_run_notice(home: Optional[Path] = None) -> Optional[Dict[str, int
     return payload
 
 
-def _mark_scanner_missing(home: Optional[Path], detail: str) -> None:
-    """Arm the one-time scanner-missing notice. Idempotent.
+def _arm_once(home: Optional[Path], prefix: str, detail: str) -> None:
+    """Arm a one-time notice under `prefix`. Idempotent.
 
     Written into the baseline document rather than a file of its own, beside
     `notice_pending`, so there is exactly one piece of state to reason about.
-    `_armed` is set on the first arming and never cleared, so a machine that
-    stays without a scanner arms once, not once per session.
+    `<prefix>_armed` is set on the first arming and never cleared, so a machine
+    that stays in the same condition arms once, not once per session.
     """
     path = _baseline_path(home)
     doc = _read_json(path) or {}
-    if doc.get("scanner_missing_armed"):
+    if doc.get(prefix + "_armed"):
         return
-    doc["scanner_missing_armed"] = True
-    doc["scanner_missing_pending"] = True
-    doc["scanner_missing_error"] = detail[:_ERR_MAX]
+    doc[prefix + "_armed"] = True
+    doc[prefix + "_pending"] = True
+    doc[prefix + "_error"] = detail[:_ERR_MAX]
     try:
         _write_json_atomic(path, doc)
     except Exception:
-        # Nothing to do. The pane still shows scanner_available: false, and
-        # the next scan attempt will try to arm again.
+        # Nothing to do. The pane still carries the same facts, and the next
+        # scan attempt will try to arm again.
         pass
 
 
-def take_scanner_missing_notice(home: Optional[Path] = None) -> Optional[str]:
-    """Claim the one-time scanner-missing notice, or return None.
+def _take_once(home: Optional[Path], prefix: str) -> Optional[str]:
+    """Claim a one-time notice, or return None.
 
     Same one-shot discipline as `take_first_run_notice`: the flag is cleared on
     disk BEFORE the payload is returned, so a crash between the claim and the
     announcement loses the notice rather than repeating it every turn.
-
-    Returns the stored `last_error` text -- the message that already names the
-    binary and says how to fix it -- so the agent feed and the pane say the
-    same thing.
     """
     path = _baseline_path(home)
     doc = _read_json(path)
-    if not doc or not doc.get("scanner_missing_pending"):
+    if not doc or not doc.get(prefix + "_pending"):
         return None
-    detail = str(doc.get("scanner_missing_error") or "")
-    doc["scanner_missing_pending"] = False
+    detail = str(doc.get(prefix + "_error") or "")
+    doc[prefix + "_pending"] = False
     try:
         _write_json_atomic(path, doc)
     except Exception:
         return None
     return detail or None
+
+
+def _mark_scanner_missing(home: Optional[Path], detail: str) -> None:
+    _arm_once(home, "scanner_missing", detail)
+
+
+def take_scanner_missing_notice(home: Optional[Path] = None) -> Optional[str]:
+    """The one-time notice that nothing is being scanned.
+
+    Returns the stored `last_error` text -- the message that already names the
+    binary and says how to fix it -- so the agent feed and the pane say the
+    same thing.
+    """
+    return _take_once(home, "scanner_missing")
+
+
+def _version_tuple(v: str) -> tuple:
+    """Leading dotted integers of a version string, for ordering only.
+
+    Deliberately not a semver parser. It answers one question -- is this engine
+    older than the floor -- and anything it cannot read sorts as (), which is
+    below every real version and therefore arms the notice. Failing toward
+    "say something" is right here: an unreadable version is not a reassurance.
+    """
+    out = []
+    for part in str(v or "").split("."):
+        digits = ""
+        for ch in part:
+            if not ch.isdigit():
+                break
+            digits += ch
+        if not digits:
+            break
+        out.append(int(digits))
+    return tuple(out)
+
+
+def engine_below_floor(version: Optional[str]) -> bool:
+    return _version_tuple(version) < _version_tuple(MIN_ENGINE)
+
+
+def take_engine_floor_notice(home: Optional[Path] = None) -> Optional[str]:
+    """The one-time notice that the installed engine is below MIN_ENGINE."""
+    return _take_once(home, "engine_floor")
 
 
 # Fields the pane is allowed to see. A whitelist, not a blacklist: the scanner
@@ -469,6 +541,18 @@ def run_scan(home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     }
     _write_json_atomic(_cache_path(root), cache)
 
+    # The engine floor. Checked here rather than at the README, because a
+    # README cannot reach someone with an old global install and this can.
+    if engine_below_floor(cache.get("engine_version")):
+        _arm_once(
+            root,
+            "engine_floor",
+            f"{SCANNER_BIN} reports version "
+            f"{cache.get('engine_version') or 'unknown'}; this adapter expects "
+            f"{MIN_ENGINE} or newer. Upgrade with `npm install -g "
+            f"glance-scanner@latest`.",
+        )
+
     # First look ever: record what was already here and alert on none of it.
     # A tool that is red on install teaches people to ignore it.
     if not has_baseline(root):
@@ -480,8 +564,12 @@ def run_scan(home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
         # a notice -- an ordinary install has a couple of `npx -y` info
         # findings, and a notice on those trains the reader to skip it.
         suppressed = sum(1 for f in cache["findings"] if f.get("severity") in AGENT_SEVERITIES)
-        _write_json_atomic(
-            _baseline_path(root),
+        # MERGE, do not replace. `_arm_once` may already have written a
+        # one-shot flag into this document -- the engine floor is armed a few
+        # lines above, on the same scan -- and a wholesale write silently
+        # erased it. Caught by V18a, which saw no notice at all.
+        doc = _read_json(_baseline_path(root)) or {}
+        doc.update(
             {
                 "created_at": cache["scanned_at"],
                 "digest": digest,
@@ -497,8 +585,17 @@ def run_scan(home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
                 "notice_pending": suppressed > 0,
                 "notice_total": len(ids),
                 "notice_critical": critical,
-            },
+                # The engine floor only catches engines already known to be
+                # bad. This catches the rest: any count this large is far more
+                # likely to be a broken scanner than a machine in that much
+                # trouble, and either way it is not something to file silently
+                # into a baseline. The baseline is still written -- refusing to
+                # would make the tool red on install, which is the behaviour
+                # that teaches people to ignore it.
+                "notice_implausible": critical > IMPLAUSIBLE_CRITICAL,
+            }
         )
+        _write_json_atomic(_baseline_path(root), doc)
 
     with _state.lock:
         _state.cache = cache

@@ -45,7 +45,15 @@ jobs:
           echo "LICENSE intact."
 
   build:
-    runs-on: ubuntu-latest
+    # Two operating systems on purpose. Four detections were lost to a
+    # macOS-specific path comparison (/var vs /private/var) with the suite
+    # green throughout, and the adapter suites had never run on Linux at all.
+    # A pass on one OS is a partial result.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -66,3 +74,21 @@ jobs:
       # tests/pipe.js on the commit that introduced it, had anything run it.
       - run: npm run build
       - run: npm test
+
+      # The Python adapter suites had never run anywhere but one laptop. They
+      # are the only coverage of the hooks, the baseline, the one-time notices
+      # and the pane contract, so a macOS-only run is not coverage.
+      #
+      # GLANCE_SCANNER_BIN rather than a global install: the tests must
+      # exercise the build from THIS commit, and a global install is one more
+      # thing that can silently be a different version.
+      # httpx is what fastapi.testclient runs on; uvicorn[standard] does not
+      # pull it, and without it the dashboard suite fails on an import.
+      - run: pip install 'fastapi' 'uvicorn[standard]' 'httpx'
+      - name: Adapter suites
+        env:
+          GLANCE_SCANNER_BIN: ${{ github.workspace }}/dist/cli.js
+        run: |
+          chmod +x dist/cli.js
+          python adapters/hermes/tests/test_adapter.py
+          python adapters/hermes/tests/test_dashboard.py

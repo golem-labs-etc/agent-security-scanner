@@ -5,7 +5,15 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
-## Unreleased
+## 1.4.0 — 2026-08-31
+
+Minor, not patch. No exported name is removed or renamed and the CLI contract
+is unchanged, so nothing breaks at the type level. But **every prompt finding's
+`id` changes**, because the fingerprint is now keyed on file content rather than
+path. Any baseline keyed on ids -- including the Hermes adapter's -- is
+invalidated by this upgrade and will re-baseline on first run. That is a
+consumer-visible change and a patch number would have hidden it.
+
 
 **The scanner returned 1508 critical and 77 high findings on a stock agent
 install, and not one of them was an attack.** 2110 files, 384 of them flagged.
@@ -135,9 +143,29 @@ Same machine, same 2110 files, `--policy balanced`, which is what produced the
 
 The three remaining high findings are two red-teaming skills that contain
 attack strings by design -- a Cyrillic homoglyph in `godmode` and "ignore
-previous instructions" in `darwinian-evolver`. Under `--policy strict`, which
-is what the Hermes adapter passes, the same scan is 0 critical and 5 high, and
-the adapter's own inventory of 1904 files is 0 critical and 2 high.
+previous instructions" in `darwinian-evolver`.
+
+The decisive measurement is an A/B of the two binaries, not of two branches.
+The published 1.3.1 tarball and this release were run against one identical
+inventory -- a stock agent install, 1904 prompt files and 4 MCP servers,
+`--policy strict`, which is what the Hermes adapter passes:
+
+| | 1.3.1 | 1.4.0 |
+|---|---|---|
+| findings | 1664 | 2 |
+| critical | 1602 | 0 |
+| high | 62 | 2 |
+
+1594 of 1.3.1's criticals were `exfiltration_instruction` on ordinary stock
+skills -- repository management, image generation, an email client. The two
+findings that remain are the red-teaming skills above.
+
+### What this says about who was affected
+
+Nothing, and deliberately so. Downloads across all six published versions sit
+at roughly 150 each, near-uniform, which is the signature of registry mirrors
+rather than of people. **We know of no affected user.** That is not the same as
+knowing there were none, and this entry claims neither.
 
 
 ## 1.3.1
