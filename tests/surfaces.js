@@ -190,19 +190,26 @@ const NEGATIVE = [
   // fires on them fires on almost every skill in a real install, so this pair
   // is the boundary, and P20 is worth nothing without it.
   //
-  // Measured, by removing the source requirement and rerunning: only the
-  // STRICT half fails. Under balanced the fence downgrade turns both calls
-  // into mediums, so `no critical, no high` stays true even with the rule
-  // broken. N14 alone would be a test that cannot fail for the reason it was
-  // written. It is kept because it pins the balanced path against a future
-  // change to the downgrade, but N14s is the one with teeth.
+  // The balanced half asserts NO FINDINGS AT ALL, which is stronger than it
+  // looks and is the only assertion here that bites.
+  //
+  // `no critical, no high` does not: with the source requirement removed, the
+  // fence downgrade turns both calls into mediums and the count assertion
+  // stays true. Neither does `no exfiltration_instruction`, which is the
+  // obvious repair and also wrong: the downgrade RENAMES the category, so a
+  // broken rule surfaces here as `fenced_directive`/medium and a check on the
+  // exfiltration category never sees it.
+  //
+  // A clean documentation file scanned under balanced should produce nothing
+  // whatsoever, so that is what is asserted. Measured both ways: 0 findings
+  // with the rule intact, 2 mediums with it broken.
   { id: 'N14', fixture: 'N14_documented_api_call.md', kind: 'prompt',
-    rule: 'documented API calls with no sensitive source are not exfiltration',
+    rule: 'documented API calls produce nothing at all under balanced',
+    check: (r) => r.findings.length === 0 },
+  { id: 'N14s', fixture: 'N14_documented_api_call.md', kind: 'prompt', policy: 'strict',
+    rule: 'and no exfiltration_instruction under strict, at any severity',
     check: (r) => r.counts.critical === 0 && r.counts.high === 0
       && !r.findings.some((x) => x.category === 'exfiltration_instruction') },
-  { id: 'N14s', fixture: 'N14_documented_api_call.md', kind: 'prompt', policy: 'strict',
-    rule: 'and still not, under strict',
-    check: (r) => r.counts.critical === 0 && r.counts.high === 0 },
 ];
 
 /**
