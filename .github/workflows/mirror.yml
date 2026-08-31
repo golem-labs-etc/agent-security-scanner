@@ -149,6 +149,7 @@ jobs:
           cat CHECKSUMS.txt
 
       - name: Push to the mirror
+        id: push
         env:
           MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
         run: |
@@ -168,6 +169,14 @@ jobs:
           git push -q --force \
             "https://x-access-token:${MIRROR_TOKEN}@github.com/golem-labs-etc/glance-hermes.git" \
             HEAD:refs/heads/main
+          # THE SHA THAT MATTERS. `hermes plugins install ... --ref <sha>`
+          # resolves against a clone of the MIRROR, so the only SHA that can
+          # ever be pinned is a commit in glance-hermes. GITHUB_SHA is a commit
+          # in THIS repository and does not exist over there: a release note
+          # emitting it hands every reader a pin that fails to resolve.
+          MIRROR_SHA=$(git rev-parse HEAD)
+          echo "mirror commit: ${MIRROR_SHA}"
+          echo "mirror_sha=${MIRROR_SHA}" >> "$GITHUB_OUTPUT"
 
       # A tag on this repo becomes a tag on the mirror, because a tag is what
       # the README tells people to install.
@@ -188,20 +197,33 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+          MIRROR_SHA: ${{ steps.push.outputs.mirror_sha }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
+          # Fail loudly rather than publish a release note whose pin command
+          # cannot resolve. An empty MIRROR_SHA means the push step changed.
+          if [ ${#MIRROR_SHA} -ne 40 ]; then
+            echo "::error::MIRROR_SHA is not a 40-character commit SHA: '${MIRROR_SHA}'"
+            exit 1
+          fi
           DIGEST=$(sha256sum /tmp/mirror/CHECKSUMS.txt | cut -d' ' -f1)
           gh release create "$TAG" \
             --repo golem-labs-etc/glance-hermes \
             --title "$TAG" \
-            --notes "Generated from \`adapters/hermes/\` at ${GITHUB_SHA}.
+            --notes "Generated from \`adapters/hermes/\` at source commit
+          \`${GITHUB_SHA}\` in
+          [\`agent-security-scanner\`](https://github.com/golem-labs-etc/agent-security-scanner/commit/${GITHUB_SHA}).
+          That SHA is for tracing this content back to where it was written. It
+          is NOT the SHA to pin: it is a commit in the source repository and
+          does not exist here.
 
           Hermes cannot install a tag: \`owner/repo@${TAG}\` is appended to the
           clone URL and fails with \`Repository not found\`. Install by name, and
-          pin with the commit SHA this release was cut from:
+          pin with the commit SHA of THIS repository that this release was cut
+          from:
 
-              hermes plugins install golem-labs-etc/glance-hermes --ref ${GITHUB_SHA}
+              hermes plugins install golem-labs-etc/glance-hermes --ref ${MIRROR_SHA}
 
           Hermes performs no signature checking and no checksum verification.
           \`--ref\` with a full 40-character commit SHA is the one real pin it
