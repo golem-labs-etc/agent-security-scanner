@@ -118,6 +118,28 @@ def format_first_run_notice(total: int, critical: int) -> str:
     )
 
 
+def format_scanner_missing_notice(detail: str) -> str:
+    """The one-time notice that nothing is being scanned.
+
+    Without this the failure mode is silence: `on_session_start` swallows
+    everything, `pre_llm_call` returns None on an empty cache, and
+    `scanner_available` and `last_error` reach only the pane. A stranger who
+    installs the plugin without the scanner gets exactly what a clean machine
+    gets, which is the one thing a security tool must never do.
+
+    Carries the existing `last_error` text and nothing else. That string
+    already names the binary and both ways to fix it, so the agent feed and the
+    pane say the same thing rather than two different things.
+    """
+    return (
+        "Glance: not scanning. No findings are being produced, and silence "
+        "from this point does not mean the machine is clean.\n"
+        f"{detail}\n"
+        "Scanning resumes by itself once the scanner is available.\n"
+        "This notice is sent once and will not repeat."
+    )
+
+
 # ------------------------------------------------------------------- hooks
 
 def on_session_start(session_id: str = "", **kwargs: Any) -> None:
@@ -156,6 +178,20 @@ def pre_llm_call(session_id: str = "", **kwargs: Any) -> Optional[Dict[str, str]
                 notice["total"],
             )
             return {"context": format_first_run_notice(notice["total"], notice["critical"])}
+
+        # Then the one-time scanner-missing notice. It cannot collide with the
+        # first-run notice: no scanner means no scan, which means no baseline
+        # and nothing for that notice to report.
+        missing = runner.take_scanner_missing_notice()
+        if missing:
+            # WARNING, not INFO: today this fact reaches the session log not at
+            # all, and "the security tool is not running" is not a debug detail.
+            log.warning(
+                "glance: not scanning, notice sent once to session %s: %s",
+                session_id or "(none)",
+                missing,
+            )
+            return {"context": format_scanner_missing_notice(missing)}
 
         fresh = runner.new_findings(seen)
         if not fresh:

@@ -2,11 +2,14 @@
 #
 # WHY THIS EXISTS
 #
-# `hermes plugins install owner/repo` has no subdirectory support, and plugins
-# are discovered at ~/.hermes/plugins/<name>/. The adapter lives at
-# adapters/hermes/ in this monorepo, so no command anyone can type installs it.
-# The mirror's ROOT is the contents of that directory, which is the only layout
-# the installer can consume.
+# `hermes plugins install owner/repo/subdir` IS supported, so the path form was
+# never the obstacle. The obstacle is Hermes' own pre-install scanner: pointed
+# at adapters/hermes/ it returns a DANGEROUS verdict on this adapter's own test
+# files, which carry attack-shaped strings inline because those strings are the
+# thing under test. The install exits 1 and writes nothing, and --force does not
+# override a dangerous verdict. This sync excludes tests/, so the mirror
+# installs; the tests stay here in the public monorepo, where nothing is hidden.
+# The mirror's ROOT is the contents of adapters/hermes/.
 #
 # THE MIRROR IS GENERATED OUTPUT. Never edit it directly: the next push to main
 # overwrites it wholesale, and an edit made there is lost without a trace. The
@@ -194,13 +197,17 @@ jobs:
             --title "$TAG" \
             --notes "Generated from \`adapters/hermes/\` at ${GITHUB_SHA}.
 
-          Install this tag, not a branch:
+          Hermes cannot install a tag: \`owner/repo@${TAG}\` is appended to the
+          clone URL and fails with \`Repository not found\`. Install by name, and
+          pin with the commit SHA this release was cut from:
 
-              hermes plugins install golem-labs-etc/glance-hermes@${TAG}
+              hermes plugins install golem-labs-etc/glance-hermes --ref ${GITHUB_SHA}
 
-          Hermes performs no signature checking, no checksum verification and no
-          version pinning. \`CHECKSUMS.txt\` is attached so that verification is
-          possible at all; it is not performed for you.
+          Hermes performs no signature checking and no checksum verification.
+          \`--ref\` with a full 40-character commit SHA is the one real pin it
+          offers, and a SHA fixes which bytes, never who wrote them.
+          \`CHECKSUMS.txt\` is attached so that verification is possible at all;
+          it is not performed for you.
 
           SHA-256 of CHECKSUMS.txt: \`${DIGEST}\`" \
             /tmp/mirror/CHECKSUMS.txt
