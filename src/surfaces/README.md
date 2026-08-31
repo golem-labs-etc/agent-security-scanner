@@ -339,20 +339,31 @@ The process exits `1` when anything critical or high was found, `0` otherwise,
 the positives, the negatives, and -- by substring search over the report rather
 than by reading it -- that no fixture content reaches default output.
 
-**Every invented hostname in a fixture, a test or a doc comment ends in
-`.invalid`.** RFC 2606 reserves `.invalid`, `.test`, `.example`, `.localhost`
-and the second-level names `example.com`, `example.net` and `example.org`. A
-name is reserved or it is registrable, and there is nothing in between: a host
-that merely *looks* fake, such as `attacker.com` or anything beginning
-`example-`, is an ordinary domain somebody can buy. In a public repo that hands
-a squatter a discoverable target, and it points every copy-paste of a payload at
-a host under someone else's control. `.invalid` can never resolve, by standard.
+**Invented attacker destinations end in `.invalid`.** That is the whole of the
+rule, and its scope is narrow on purpose: it covers hosts that stand in for a
+place an attack would send data. It is not a rule about every hostname in the
+repo.
 
-The two exceptions are deliberate. `tests/fixtures/surfaces/real/` holds
-third-party skill files reproduced verbatim, so the real hosts inside them stay
-as written; changing them would make them no longer the files that ship. And
-hosts the scanner genuinely talks about, such as `api.github.com`, are real
-because they are real.
+RFC 2606 reserves `.invalid`, `.test`, `.example`, `.localhost` and the
+second-level names `example.com`, `example.net` and `example.org`. A name is
+reserved or it is registrable and there is nothing in between, so a host that
+merely *looks* fake -- `attacker.com`, or anything beginning `example-` --- is an
+ordinary domain somebody can buy. In a public repo that hands a squatter a
+target they can find by reading the source, and it points every copy-paste of a
+payload at a host under someone else's control. `.invalid` can never resolve, by
+standard.
+
+**Real hosts stay real.** Naming `api.github.com` in a comment about excluding
+auth headers is accurate and is clearer than a placeholder, because the rule it
+describes is one that real GitHub calls trip. Replacing it would make the
+comment vaguer and no safer: nothing here is a destination for anything. The
+same goes for `registry.npmjs.org`, `api.openai.com` and every other service the
+scanner genuinely talks about.
+
+**Verbatim third-party content stays verbatim.** `tests/fixtures/surfaces/real/`
+reproduces stock skill files exactly as they ship, so the real hosts inside them
+are left alone. Editing them would make them no longer the files under test,
+which is the entire reason they are here.
 
 Two additions are worth knowing about, because the suite was 61 for 61 green
 while the scanner produced 1508 critical findings on an ordinary install.
