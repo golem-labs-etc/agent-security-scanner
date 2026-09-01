@@ -86,6 +86,25 @@ retries through pipx — which puts semgrep in its own virtualenv, which PEP 668
 allows — and if pipx is missing or fails it names the interpreter to install
 rather than repeating the command that just failed.
 
+### The verdict line, and what an "audit" tag means
+
+Every report opens with one sentence answering the question you actually have,
+before any counts. It is derived from the severity mix and the rule classes,
+never written by hand, and it changes with how you invoked the scan: `--repo`
+asks whether this code can be trusted, `--path` asks whether it is ready to
+ship.
+
+Findings tagged **`[audit]`** come from semgrep's `audit` rule class. **An audit
+rule reports a construct worth looking at; it has not established that anything
+is wrong** — `express.security.audit.xss.direct-response-write` fires on every
+`res.send()` of a variable, including ones whose value never leaves your
+program. **A run that found only audit findings will never tell you to fix
+something before shipping**, because nothing has asserted a defect; it will say
+they are worth a look, and where to look.
+
+A zero-finding run says which engines ran and over how many files, rather than
+"clean". An engine that did not run cannot have found nothing.
+
 ### Known gaps, so you are not surprised by them
 
 Measured, not assumed:

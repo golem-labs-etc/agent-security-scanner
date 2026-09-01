@@ -13,6 +13,7 @@ import { FindingsDeduplicator } from './deduplicator';
 import { SemanticFilter } from './semantic-filter';
 import { resolveProvider, resolveApiKey } from './env-key';
 import { MARK } from './brand';
+import { verdictLine, actionFor, isAuditClass, Frame } from './verdict';
 
 // `quiet` suppresses dotenvx's "injected env (1) from .env" banner, which it
 // writes to STDOUT at import time. That banner was the first line of every
@@ -341,6 +342,12 @@ program
         }
       }
 
+      // The invocation decides who is reading. --repo is someone evaluating
+      // code they did not write; --path and --file are someone scanning their
+      // own tree. Stored once here and used only in the verdict and the action
+      // sentences, never in what is found or how it is ranked.
+      const frame: Frame = options.repo ? 'adopter' : 'author';
+
       let files: string[] = [];
       let scanDir: string = '';
       let cleanupDirs: string[] = [];
@@ -488,7 +495,7 @@ program
         // ambiguous in exactly the way this work exists to fix.
         console.log(deduplicator.generateJSON({ ...report, engines: engineRuns }));
       } else {
-        printUnifiedReport(report, options.verbose ? files : []);
+        printUnifiedReport(report, options.verbose ? files : [], frame, engineRuns, files.length);
       }
 
       // Cleanup cloned repos. Already total: rmSync is wrapped, so nothing
@@ -572,10 +579,24 @@ function printCodeContext(filePath: string, line: number, scannedFiles: string[]
   }
 }
 
-function printUnifiedReport(report: any, verboseFiles: string[] = []) {
+function printUnifiedReport(
+  report: any,
+  verboseFiles: string[] = [],
+  frame: Frame = 'author',
+  engines: { name: string; ran: boolean; reason?: string }[] = [],
+  fileCount = 0
+) {
   const { summary, findings } = report;
 
   console.log(`\n=== ${MARK} GLANCE SECURITY REPORT ===\n`);
+
+  // The verdict, first, before any counts. It answers the question the reader
+  // actually has; the counts below are the evidence for it. Derived from the
+  // severity mix and the rule classes -- see verdict.ts.
+  //
+  // Not passed through renderField: every character of it is generated here
+  // from integers and fixed strings, with no tool output interpolated.
+  console.log(`${verdictLine(findings, engines, frame, fileCount)}\n`);
 
   console.log(`📊 Summary:`);
   console.log(`  Total Issues: ${summary.total}`);
@@ -586,7 +607,8 @@ function printUnifiedReport(report: any, verboseFiles: string[] = []) {
   console.log(`  Tools: ${summary.toolsCovered.join(', ')}\n`);
 
   if (findings.length === 0) {
-    console.log('✓ No security issues found!\n');
+    // No "✓ clean" line here. The verdict above already said what ran and what
+    // it does not cover, and a tick beside it would undo that.
     return;
   }
 
@@ -607,7 +629,10 @@ function printUnifiedReport(report: any, verboseFiles: string[] = []) {
     // Same values as the surfaces report, different command. Found by
     // tools/render-safety.js, not by the work order that fixed the other one,
     // which is the whole reason that check exists.
-    console.log(`${severityEmoji[finding.severity]} [${renderField(finding.severity)}] ${renderPath(finding.file, finding.line)}${confidenceNote}`);
+    // An audit-class rule reports a construct worth looking at, not a defect
+    // it has established. Tagged inline so the severity is never read alone.
+    const auditTag = isAuditClass(finding) ? ' [audit]' : '';
+    console.log(`${severityEmoji[finding.severity]} [${renderField(finding.severity)}]${auditTag} ${renderPath(finding.file, finding.line)}${confidenceNote}`);
     // More than one category at one line means the rules disagree about what
     // the problem IS, not that one of them is noise. Both get named.
     const others = (finding.categories || []).filter((c) => c !== finding.category);
@@ -621,6 +646,11 @@ function printUnifiedReport(report: any, verboseFiles: string[] = []) {
     if (finding.rules && finding.rules.length) {
       console.log(`   Rules: ${finding.rules.map((r: string) => renderField(r, 80)).join(', ')}`);
     }
+    // One sentence on what to do, derived from the rule class. Absent when the
+    // rule does not support one: see actionFor.
+    const action = actionFor(finding);
+    if (action) console.log(`   Action: ${escapeControls(action)}`);
+
     if (finding.filteringReasoning) {
       // Fifth instance of the same bug, found 1 Sep by auditing the sites the
       // grep does not know about. This string is the model's REASONING line,
