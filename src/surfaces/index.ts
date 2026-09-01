@@ -17,7 +17,7 @@ import { canonical } from './text';
 import { DEFAULT_POLICY, findPlantedConfigs, plantedConfigWarnings } from './config';
 
 export * from './types';
-export { discoverInventory } from './discover';
+export { discoverInventory, discoverDefaultInventory, defaultSurfaceLocations } from './discover';
 export * from './config';
 export { findObfuscation } from './obfuscation';
 
