@@ -131,6 +131,20 @@ red on install teaches people to ignore it.
 Baselines are per-machine: a finding id is a fingerprint over category, path,
 line and normalized evidence, and the path here is absolute.
 
+A baseline records the engine that wrote it, and a baseline written by an
+engine below `MIN_ENGINE` -- or one with no engine recorded -- counts as
+absent. A baseline is a claim about what was already present, and an engine
+this adapter refuses to report findings from cannot be trusted to make that
+claim: 1.3.1 returned 1602 critical findings on a stock machine where 1.4.0
+returns none, and a baseline built from that is 1602 assertions that garbage is
+normal.
+
+Every baseline written before this field existed therefore re-baselines once,
+including any written by 1.4.0, because nothing on disk tells them apart. That
+re-baseline is announced by the ordinary first-run notice, with the
+implausibility gate on it. One loud, explained, one-time event was the cheaper
+side of the trade.
+
 ## Policy
 
 The adapter passes `--policy strict`. An agent consuming raw markdown never
