@@ -5,6 +5,31 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
+## 1.5.0 — 2026-09-01
+
+**`surfaces` with no `--root` now scans what an agent can reach.** It previously
+errored and told you to pass a root, and the obvious root for a Claude Code
+user, `~/.claude`, could not reach that platform's user-scope MCP config,
+because `$HOME/.claude.json` is a sibling of that directory rather than a child.
+So the command people would naturally run reported a clean machine over servers
+it had never read, which is the worst failure mode this tool has.
+
+On the machine this was verified on, `surfaces --root ~/.claude` scanned 9
+surfaces and reported nothing. `surfaces` with no arguments checked 11
+locations, found 8, and reported an unpinned fetch-and-run server in
+`~/.claude.json`.
+
+The scan prints every location it considered, including the ones that were
+absent, so nothing is read that you are not told about. `--root` is unchanged
+and still means exactly what it meant.
+
+`discover.ts` now has a test, `tests/discovery.js`, which is new because it had
+none.
+
+Known gap, not fixed here: a root that does not exist, or a file the engine has
+no rules for, does not yet put a warning in the `warnings` array of the `--json`
+report, so a consumer reading JSON cannot tell a bad root from a clean machine.
+
 ## 1.4.1 — 2026-09-01
 
 **A directory name could write lines into the report.** Two findings produced
