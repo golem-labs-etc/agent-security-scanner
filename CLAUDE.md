@@ -77,6 +77,55 @@ price, not a licence. If the guard ships MIT, a fork takes the actual product an
 we keep the support burden. `LICENSE` here states the guard's source is not
 published in this repo. Adding guard code makes that statement false.
 
+## The rendering invariant (added 1 Sep 2026, after the fourth instance)
+
+**Any value derived from a scanned tree is escaped for the renderer it will
+reach. A value with no known renderer is escaped for all of them.**
+
+Use `src/render-safe.ts`: `renderPath`, `renderEvidence`, `renderField`,
+`escapeControls`, `fenceFor`. Do not write a second copy inline.
+
+The values are paths, matched text, category and severity strings, MCP server
+names, and anything else read out of a tree we did not write. A path is a
+filename, and a filename is written by whoever wrote the file, which for every
+finding this tool exists to report is the attacker.
+
+This is written down because the same bug has now been fixed four times, and
+each fix was scoped to the surface being looked at rather than to every surface
+carrying the same value:
+
+1. the agent announcement in `adapters/hermes/hooks.py`, where a directory name
+   forged a complete Glance announcement declaring the machine clean
+2. the trailer of that same announcement, which then told the agent to run the
+   command that fetches the matched text
+3. the human report in `src/cli.ts`, where the identical directory name
+   produced eight lines from two findings
+4. the LLM prompt in `src/semantic-filter.ts`, where the file path and message
+   were raw and the code fence could be closed from inside
+
+Fixing one and stopping is what produced the next. The invariant is the rule
+that would have caught all four at the first.
+
+### What the escape covers, and what it does not
+
+It covers **control characters**: C0, C1, DEL, U+2028, U+2029, U+FEFF, the
+zero-width marks, the bidi overrides and isolates. Those are the characters
+that change line structure, drive a terminal, or reorder what a person reads.
+
+It does **not** cover **in-band markup**: Rich console tags, Markdown, HTML.
+Nothing renders our output that way today. **That is a statement about current
+wiring, not a guarantee.** It is exactly how the guard we depend on was caught:
+its scan report was correct text, printed through a markup-interpreting
+console, and a directory name could therefore both forge a verdict line and
+leave a style tag open that restyled the tool's own real verdict printed
+afterwards.
+
+If you add a renderer that interprets markup, or send our output to one, that
+renderer needs its own escape on top of this one. Adding the sink is what
+creates the hole; the value was always hostile.
+
+Enforced by `tools/render-safety.js`, wired into `npm test`.
+
 ## Before you rewrite history in this repo
 
 Squash, orphan commit, rebase, force push: check first that nothing untracked is

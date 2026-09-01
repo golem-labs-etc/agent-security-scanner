@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import { renderPath, renderField, renderEvidence, escapeControls } from './render-safe';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
@@ -162,7 +163,10 @@ function printSurfaceReport(report: any, withEvidence: boolean): void {
   console.log(`${MARK} agent surfaces`);
   console.log(`  policy ${report.policy}  |  scanned ${report.total_scanned}  |  critical ${c.critical}  high ${c.high}  medium ${c.medium}  info ${c.info}`);
   for (const w of report.warnings || []) {
-    console.log(`  warning: ${w.message}`);
+    // A warning names a path: the planted-.glance.json warning exists to say
+    // WHICH file inside the scanned tree it ignored. That path is written by
+    // the same person who planted the config.
+    console.log(`  warning: ${escapeControls(w.message)}`);
   }
   if (!report.findings.length) {
     console.log('  nothing to report.');
@@ -170,9 +174,13 @@ function printSurfaceReport(report: any, withEvidence: boolean): void {
   }
   console.log();
   for (const f of report.findings) {
-    const loc = f.line ? `${f.path}:${f.line}` : f.path;
-    console.log(`  ${f.severity.padEnd(8)} ${f.category.padEnd(24)} ${loc}  [${f.id}]`);
-    if (withEvidence && f.evidence) console.log(`           ${f.evidence}`);
+    // Every value on this line came out of the scanned tree. The path is a
+    // filename, written by whoever wrote the file; the evidence is the matched
+    // line, which is attack text by definition. Both go through render-safe,
+    // and severity/category/id are whitelisted because they are ours.
+    const loc = renderPath(f.path, f.line);
+    console.log(`  ${renderField(f.severity).padEnd(8)} ${renderField(f.category).padEnd(24)} ${loc}  [${renderField(f.id, 16)}]`);
+    if (withEvidence && f.evidence) console.log(`           ${renderEvidence(f.evidence)}`);
   }
   if (!withEvidence) {
     console.log();
@@ -551,17 +559,22 @@ function printUnifiedReport(report: any, verboseFiles: string[] = []) {
 
     const lineInfo = finding.line ? `:${finding.line}` : '';
     const confidenceNote = finding.confidence ? ` [${finding.confidence} confidence]` : '';
-    console.log(`${severityEmoji[finding.severity]} [${finding.severity}] ${finding.file}${lineInfo}${confidenceNote}`);
+    // Same values as the surfaces report, different command. Found by
+    // tools/render-safety.js, not by the work order that fixed the other one,
+    // which is the whole reason that check exists.
+    console.log(`${severityEmoji[finding.severity]} [${renderField(finding.severity)}] ${renderPath(finding.file)}${lineInfo}${confidenceNote}`);
     // More than one category at one line means the rules disagree about what
     // the problem IS, not that one of them is noise. Both get named.
     const others = (finding.categories || []).filter((c) => c !== finding.category);
-    console.log(`   Category: ${finding.category}${others.length ? ` (also: ${others.join(', ')})` : ''}`);
-    console.log(`   Message: ${finding.message}`);
-    console.log(`   Tools: ${finding.tools.join(', ')}`);
+    console.log(`   Category: ${renderField(finding.category)}${others.length ? ` (also: ${others.map((c: string) => renderField(c)).join(', ')})` : ''}`);
+    // A tool's message quotes the offending source line, so it is attacker
+    // text with a vendor's wrapper around it.
+    console.log(`   Message: ${escapeControls(finding.message)}`);
+    console.log(`   Tools: ${finding.tools.map((x: string) => renderField(x)).join(', ')}`);
     // Every rule that fired here. With collapsing on file+line, this is the
     // only place the count of contributing rules is visible.
     if (finding.rules && finding.rules.length) {
-      console.log(`   Rules: ${finding.rules.join(', ')}`);
+      console.log(`   Rules: ${finding.rules.map((r: string) => renderField(r, 80)).join(', ')}`);
     }
     if (finding.filteringReasoning) {
       console.log(`   Verification: ${finding.filteringReasoning}`);
