@@ -434,9 +434,43 @@ def on_skill_lifecycle(action: str = "", **kwargs: Any) -> None:
 
 
 def on_session_end(session_id: str = "", **kwargs: Any) -> None:
-    """Drop this session's announced set. Other sessions are untouched."""
+    """Drop this session's announced set, then warm the cache for the next one.
+
+    THE FIRST TURN OF A SESSION COULD NEVER CARRY AN ANNOUNCEMENT, AND THIS IS
+    THE FIX.
+
+    A finding reaches the agent only through `pre_llm_call`, which reads the
+    last COMPLETED scan and never scans. The scan was kicked in
+    `on_session_start`, on a background thread, and takes seconds -- 8.8s
+    measured against a real `~/.hermes` on 1 Sep 2026. Turn one's
+    `pre_llm_call` fires milliseconds after the kick, so it always read the
+    previous scan's cache, whose findings were already baselined or already
+    announced. Anything newly discovered landed on turn two.
+
+    That is not a race that sometimes loses. Any NEW finding is by definition
+    found by the scan that starts at session open, so turn one could never
+    carry one. The cost is not a one-turn delay: a single-turn session was
+    never told at all, silently.
+
+    Blocking turn one is not available. `pre_llm_call` runs on every turn of
+    every session, and a timeout short enough to sit on that path would expire
+    on every scan anyway.
+
+    So scan when the session closes, and let the NEXT session open on a warm
+    cache. This cannot regress: if this kick did not run, or the tree moved
+    since, `on_session_start` still kicks and the behaviour is exactly what it
+    was before. It buys turn one for every session after the first.
+
+    Other sessions' announced sets are untouched.
+    """
     try:
         _forget_session(session_id)
     except Exception:
         log.debug("glance: on_session_end failed", exc_info=True)
+    # Deliberately a second try block. Forgetting the session and warming the
+    # cache are independent, and a failure in either must not skip the other.
+    try:
+        runner.kick_scan()
+    except Exception:
+        log.debug("glance: on_session_end scan kick failed", exc_info=True)
     return None
