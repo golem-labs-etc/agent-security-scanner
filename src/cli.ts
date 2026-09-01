@@ -94,7 +94,7 @@ program
   )
   .action(async (options) => {
     try {
-      const { scanSurfaces, discoverInventory, resolvePolicy, CATEGORIES } = require('./surfaces');
+      const { scanSurfaces, discoverInventory, discoverDefaultInventory, resolvePolicy, CATEGORIES } = require('./surfaces');
 
       // Answered before any input is required: a consumer asking what this
       // engine can emit should not have to have something to scan.
@@ -106,10 +106,6 @@ program
 
       const { policy, warnings } = resolvePolicy(options.policy);
 
-      if (!options.inventory && !options.root) {
-        console.error('error: pass --inventory <path.json> or --root <dir>');
-        exitAfterFlush(2);
-      }
 
       let inv;
       if (options.inventory) {
@@ -121,10 +117,23 @@ program
       }
 
       let configScanRoots: string[] = [];
+      let checked: Array<{ path: string; kind: string; found: boolean }> | null = null;
       if (options.root) {
         const root = path.resolve(options.root);
         inv = discoverInventory(root);
         configScanRoots = [root];
+      } else if (!options.inventory) {
+        // No --root and no --inventory: scan what an agent can actually reach.
+        //
+        // `--root ~` was never a reasonable default. Measured 1 Sep 2026 on a
+        // real machine it took 49.7s over 3001 files and returned ten findings,
+        // none of which an agent could reach: a downloaded zip, disabled
+        // optional skills, an inactive profile, and this repo's own fixtures.
+        // Telling a stranger to point a security tool at their whole home
+        // directory is also the wrong first thing to ask of them.
+        const d = discoverDefaultInventory();
+        inv = d.inventory;
+        checked = d.checked;
       }
 
       const report = await scanSurfaces(inv, {
@@ -135,9 +144,13 @@ program
       });
 
       if (options.json) {
-        console.log(JSON.stringify(report, null, 2));
+        console.log(JSON.stringify(checked ? { ...report, checked } : report, null, 2));
       } else {
-        printSurfaceReport(report, !!options.evidence);
+        // Say where we looked BEFORE saying what we found. A clean report from
+        // a scanner that checked nothing looks exactly like a clean machine,
+        // and absence reported is the only thing that separates them.
+        if (checked) printCheckedLocations(checked);
+        printSurfaceReport(report, !!options.evidence, !checked);
       }
       // Set the code and return; do NOT call process.exit() here.
       //
@@ -157,10 +170,35 @@ program
     }
   });
 
-/** Human-readable surface report. Evidence appears only when asked for. */
-function printSurfaceReport(report: any, withEvidence: boolean): void {
-  const c = report.counts;
+/**
+ * What was consulted, present or absent.
+ *
+ * Absent locations are listed too. A person who sees "0 of 6 found" knows the
+ * clean result means nothing on their machine; a person shown only findings
+ * cannot tell that apart from a clean machine.
+ */
+function printCheckedLocations(
+  checked: Array<{ path: string; kind: string; found: boolean }>
+): void {
+  const found = checked.filter((c) => c.found);
   console.log(`${MARK} agent surfaces`);
+  console.log(`  no --root given, so only locations an agent can reach were checked.`);
+  console.log(`  checked ${checked.length}, found ${found.length}`);
+  for (const c of checked) {
+    console.log(`    ${c.found ? 'found  ' : 'absent '} ${escapeControls(c.path)}`);
+  }
+  if (!found.length) {
+    console.log('  nothing found to scan. This is not a clean result: it means');
+    console.log('  no agent configuration was present at any known location.');
+    console.log('  Pass --root <dir> to scan a specific tree.');
+  }
+  console.log();
+}
+
+/** Human-readable surface report. Evidence appears only when asked for. */
+function printSurfaceReport(report: any, withEvidence: boolean, header = true): void {
+  const c = report.counts;
+  if (header) console.log(`${MARK} agent surfaces`);
   console.log(`  policy ${report.policy}  |  scanned ${report.total_scanned}  |  critical ${c.critical}  high ${c.high}  medium ${c.medium}  info ${c.info}`);
   for (const w of report.warnings || []) {
     // A warning names a path: the planted-.glance.json warning exists to say
