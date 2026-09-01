@@ -10,7 +10,7 @@ if [ -n "$BAD" ]; then
   echo ""
   echo "  Guard  -> ~/glance-guard      Site -> ~/glance-site"
   echo "  Specs  -> ~/agent-security-scanner/_private/  (gitignored)"
-  echo "  See CLAUDE.md. If you believe this is wrong, ask Eitan, do not bypass."
+  echo "  See CLAUDE.md. If you believe this is wrong, ask the maintainer, do not bypass."
   echo ""
   exit 1
 fi

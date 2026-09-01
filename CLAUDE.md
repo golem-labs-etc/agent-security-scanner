@@ -23,7 +23,7 @@ They are separate repos on purpose, and the reasons are recorded in the private
 
 ### Scope amendment, 30 Aug 2026: `adapters/`
 
-Approved by Eitan on 30 Aug 2026. Until then this table said the CLI and
+Approved by the maintainer on 30 Aug 2026. Until then this table said the CLI and
 nothing else, so this is a deliberate change and not a drift.
 
 `adapters/<platform>/` holds the code that maps one host's layout onto the
@@ -142,7 +142,7 @@ are accepted here; enumerated filenames are not.
 
 ## Changing any of this
 
-Ask Eitan. Do not settle it in a commit message.
+Ask the maintainer. Do not settle it in a commit message.
 
 ## Parallel sessions
 
@@ -151,7 +151,7 @@ leaked material and lost work. Rules:
 
 - **One session per working copy.** Need two? `git worktree add ../work -b topic`, or `tools/session.sh` in the scanner repo.
 - **Never rewrite shared history**: no `--force`, `--orphan`, `reset --hard` or
-  squash of pushed commits on `main`. That is Eitan's call, not a task step.
+  squash of pushed commits on `main`. That is the maintainer's call, not a task step.
 - **Commit before going idle.** Untracked work is what gets swept in or dropped.
 - **Before any destructive op**, run `git status --porcelain | grep '^??'`. If it
   lists files you did not create, another session is live. Stop.

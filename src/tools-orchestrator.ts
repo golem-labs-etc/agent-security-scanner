@@ -130,7 +130,7 @@ const SEMGREP_TAXONOMY: Array<[string, string]> = [
  *
  * Rules loaded from `--config=<dir>` are named after the path they came from,
  * so ours arrived as
- * `Users.eitan.agent-security-scanner.rules.glance-js-sql-injection` — the
+ * `Users.dev.agent-security-scanner.rules.glance-js-sql-injection` — the
  * scanner's own install location, printed in the user's report. From npm it
  * would be their node_modules path instead. Neither is information about their
  * code.

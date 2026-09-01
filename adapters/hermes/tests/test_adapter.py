@@ -529,7 +529,7 @@ def run_all(tmp: Path, scanner) -> int:
         "spawn": stub("spawn-fail", "#!/nonexistent/interpreter\nexit 0\n"),
 
         # Ran, objected, said why on stderr. The ENOENT-on-missing-inventory
-        # case Eitan reproduced is exactly this shape.
+        # case the maintainer reproduced is exactly this shape.
         "exit2": stub(
             "exit-2",
             "#!/bin/sh\n"
