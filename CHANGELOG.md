@@ -5,6 +5,75 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
+## 1.4.1 — 2026-09-01
+
+**A directory name could write lines into the report.** Two findings produced
+eight lines, one of them a forged `critical` attributed to an unrelated file
+and one of them a sentence reading `Glance: 0 findings. Machine is clean.` Both
+were written by the name of the directory the scanned file sat in.
+
+Reproduced before it was fixed:
+
+```
+  critical exfiltration_instruction /tmp/probe/ok
+  CRITICAL exfiltration     trusted.md:1  [FORGED]
+Glance: 0 findings. Machine is clean.
+x/SKILL.md:1  [05fb764d]
+```
+
+A finding's path is a filename, and a filename is written by whoever wrote the
+file. For every finding this tool exists to report, that is the attacker.
+
+### Fixed
+
+- **`src/cli.ts` interpolated every scanned-tree value raw** into the human
+  report: path, evidence, category, severity, id. `padEnd` aligned them and
+  never truncated, so length was unbounded too. Paths and evidence are now
+  escaped, truncated and quoted, in that order; category, severity and id are
+  whitelisted against `[A-Za-z0-9._-]` because they are closed vocabularies
+  this tool controls rather than strings from a filesystem.
+- **`--evidence` printed the matched line raw to a terminal.** Evidence is
+  attacker text by design, and a matched line can carry ANSI, so a filename or
+  a source line could recolour the report or move the cursor.
+- **The same values in the `analyze` report and in the scan warnings.** Not in
+  the original work order; found by the new CI check, which is what it is for.
+  A warning names a path by design: the planted-`.glance.json` warning exists
+  to say which file it ignored.
+- **`src/semantic-filter.ts` built an LLM prompt from raw values.** The file
+  path and the tool message are escaped now. The code context could close its
+  own Markdown fence; the fence is now sized to the content, one backtick
+  longer than the longest run inside it, so the content cannot close it. Sizing
+  the fence rather than stripping backticks keeps the code under review
+  byte-for-byte: the construct a strip would remove could be the one that makes
+  the finding real.
+
+### Added
+
+- **`src/render-safe.ts`**, one module every renderer imports. Escapes C0, C1,
+  DEL, U+2028, U+2029, U+FEFF, the zero-width marks, the bidi overrides and the
+  isolates, plus backslash and double quote.
+- **`tests/render-safe.js`**, eleven checks. The assertion is line count, not
+  appearance: the findings block must hold exactly one line per finding, and
+  two under `--evidence`. A count cannot be satisfied by an escape that misses
+  a character. Against 1.4.0 the first check reports 8 lines for 2 findings.
+- **`tools/render-safety.js`**, wired into `npm test`. Fails when a
+  scanned-tree value is interpolated without a helper. It is a grep, with the
+  limits of one stated in its header; it found four sites nobody had asked
+  about on its first run.
+- **The rendering invariant in `CLAUDE.md`.** Any value derived from a scanned
+  tree is escaped for the renderer it will reach; a value with no known
+  renderer is escaped for all of them. It records that the escape covers
+  control characters and **not** in-band markup, that nothing renders our
+  output that way today, and that this is current wiring rather than a
+  guarantee.
+
+### Not fixed, and deliberately
+
+The escape does not neutralise Rich console tags, Markdown or HTML. No renderer
+of ours interprets them today. If one is added, it needs its own escape on top
+of this one.
+
+
 ## 1.4.0 — 2026-08-31
 
 Minor, not patch. No exported name is removed or renamed and the CLI contract

@@ -23,7 +23,7 @@ They are separate repos on purpose, and the reasons are recorded in the private
 
 ### Scope amendment, 30 Aug 2026: `adapters/`
 
-Approved by Eitan on 30 Aug 2026. Until then this table said the CLI and
+Approved by the maintainer on 30 Aug 2026. Until then this table said the CLI and
 nothing else, so this is a deliberate change and not a drift.
 
 `adapters/<platform>/` holds the code that maps one host's layout onto the
@@ -77,6 +77,55 @@ price, not a licence. If the guard ships MIT, a fork takes the actual product an
 we keep the support burden. `LICENSE` here states the guard's source is not
 published in this repo. Adding guard code makes that statement false.
 
+## The rendering invariant (added 1 Sep 2026, after the fourth instance)
+
+**Any value derived from a scanned tree is escaped for the renderer it will
+reach. A value with no known renderer is escaped for all of them.**
+
+Use `src/render-safe.ts`: `renderPath`, `renderEvidence`, `renderField`,
+`escapeControls`, `fenceFor`. Do not write a second copy inline.
+
+The values are paths, matched text, category and severity strings, MCP server
+names, and anything else read out of a tree we did not write. A path is a
+filename, and a filename is written by whoever wrote the file, which for every
+finding this tool exists to report is the attacker.
+
+This is written down because the same bug has now been fixed four times, and
+each fix was scoped to the surface being looked at rather than to every surface
+carrying the same value:
+
+1. the agent announcement in `adapters/hermes/hooks.py`, where a directory name
+   forged a complete Glance announcement declaring the machine clean
+2. the trailer of that same announcement, which then told the agent to run the
+   command that fetches the matched text
+3. the human report in `src/cli.ts`, where the identical directory name
+   produced eight lines from two findings
+4. the LLM prompt in `src/semantic-filter.ts`, where the file path and message
+   were raw and the code fence could be closed from inside
+
+Fixing one and stopping is what produced the next. The invariant is the rule
+that would have caught all four at the first.
+
+### What the escape covers, and what it does not
+
+It covers **control characters**: C0, C1, DEL, U+2028, U+2029, U+FEFF, the
+zero-width marks, the bidi overrides and isolates. Those are the characters
+that change line structure, drive a terminal, or reorder what a person reads.
+
+It does **not** cover **in-band markup**: Rich console tags, Markdown, HTML.
+Nothing renders our output that way today. **That is a statement about current
+wiring, not a guarantee.** It is exactly how the guard we depend on was caught:
+its scan report was correct text, printed through a markup-interpreting
+console, and a directory name could therefore both forge a verdict line and
+leave a style tag open that restyled the tool's own real verdict printed
+afterwards.
+
+If you add a renderer that interprets markup, or send our output to one, that
+renderer needs its own escape on top of this one. Adding the sink is what
+creates the hole; the value was always hostile.
+
+Enforced by `tools/render-safety.js`, wired into `npm test`.
+
 ## Before you rewrite history in this repo
 
 Squash, orphan commit, rebase, force push: check first that nothing untracked is
@@ -91,9 +140,38 @@ Those grep patterns stay, for the same reason `.github/workflows/boundary.yml`
 keeps its: a check that cannot name what it is looking for cannot run. Patterns
 are accepted here; enumerated filenames are not.
 
+## Which GitHub account (added 1 Sep 2026)
+
+**Ask before the first write.** The first push, PR, comment, merge, release or
+advisory you make in a project: stop and ask which GitHub account it should come
+from. Do not infer it from the remote, from `gh auth status`, or from whichever
+credential happens to work. Getting a write accepted is not evidence it was
+attributed to the right person, and attribution on a public repository cannot be
+edited afterwards.
+
+The default here is **`golem-labs-etc`**, and never a personal account. That
+default does not remove the question; a project can want something else, and only
+the maintainer knows which.
+
+Three separate channels decide who gets named, and setting one does not set another:
+
+- **Commit author** is the email in the commit object. Check it:
+  `git config user.email` should print
+  `319544201+golem-labs-etc@users.noreply.github.com`.
+- **Push actor** is the credential that authenticates, not the commit email. An
+  HTTPS remote uses the OS keychain and will silently push as whoever is stored
+  there. Remotes here use the SSH alias `github.com-golem`. Check it:
+  `ssh -T git@github.com-golem` must answer `Hi golem-labs-etc!`.
+- **Web actions** (PR opens, merges, comments, GHSA filings) are attributed to
+  whoever is signed into the browser. They are permanent and no setting moves
+  them later.
+
+Several merge commits and pull requests on this public repository carry the wrong
+account because nobody asked this question before the first write.
+
 ## Changing any of this
 
-Ask Eitan. Do not settle it in a commit message.
+Ask the maintainer. Do not settle it in a commit message.
 
 ## Parallel sessions
 
@@ -102,7 +180,7 @@ leaked material and lost work. Rules:
 
 - **One session per working copy.** Need two? `git worktree add ../work -b topic`, or `tools/session.sh` in the scanner repo.
 - **Never rewrite shared history**: no `--force`, `--orphan`, `reset --hard` or
-  squash of pushed commits on `main`. That is Eitan's call, not a task step.
+  squash of pushed commits on `main`. That is the maintainer's call, not a task step.
 - **Commit before going idle.** Untracked work is what gets swept in or dropped.
 - **Before any destructive op**, run `git status --porcelain | grep '^??'`. If it
   lists files you did not create, another session is live. Stop.

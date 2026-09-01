@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { renderPath, renderField, renderEvidence, escapeControls, fenceFor } from './render-safe';
 import { ToolFinding } from './tools-orchestrator';
 import { resolveProvider, resolveApiKey } from './env-key';
 
@@ -115,19 +116,33 @@ export class SemanticFilter {
   }
 
   private buildPrompt(finding: ToolFinding, codeContext: string): string {
+    // This prompt is assembled from a scanned tree and sent to a model. The
+    // file path is a filename an attacker wrote; the message is a tool's
+    // rendering of attacker code. Both are escaped, so neither can close a
+    // line and forge a section header.
+    //
+    // The code context cannot be escaped the same way: newlines are what make
+    // it readable, and it is the thing the model is being asked to judge. The
+    // problem there was the fence, which the content could close. Fixed by
+    // sizing the fence to the content rather than by altering the content --
+    // see fenceFor. Stripping backticks would have edited the code under
+    // review, and the construct removed could be the one that makes the
+    // finding real.
+    const body = codeContext.substring(0, 2000);
+    const fence = fenceFor(body);
     return `You are a security code reviewer evaluating whether a vulnerability finding is real or a false positive.
 
 FINDING TO ANALYZE:
-Tool: ${finding.tool}
-Severity: ${finding.severity}
-File: ${finding.file}
-Line: ${finding.line || 'unknown'}
-Message: ${finding.message}
+Tool: ${renderField(finding.tool)}
+Severity: ${renderField(finding.severity)}
+File: ${renderPath(finding.file)}
+Line: ${renderField(finding.line || 'unknown')}
+Message: ${escapeControls(finding.message)}
 
 CODE CONTEXT (surrounding the finding):
-\`\`\`
-${codeContext.substring(0, 2000)}
-\`\`\`
+${fence}
+${body}
+${fence}
 
 YOUR TASK:
 1. Read the code context carefully
@@ -168,7 +183,7 @@ Respond only in the format above.`;
     const filtered: FilteredFinding[] = [];
 
     for (const finding of findings) {
-      console.log(`  Filtering: ${finding.tool} - ${finding.message.substring(0, 50)}...`);
+      console.log(`  Filtering: ${renderField(finding.tool)} - ${escapeControls(finding.message).substring(0, 50)}...`);
       const result = await this.filterFinding(finding, codeContext);
       filtered.push(result);
       await this.delay(200);
