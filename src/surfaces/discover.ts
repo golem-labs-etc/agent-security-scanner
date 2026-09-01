@@ -8,6 +8,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { Inventory, McpServerEntry, PromptFileEntry } from './types';
 
@@ -27,6 +28,17 @@ const MCP_CONFIG_NAMES = [
   'mcp_servers.json',
   'claude_desktop_config.json',
   'settings.json',
+  // Claude Code's USER-scope MCP servers. Verified 1 Sep 2026 on a real
+  // install: top-level `mcpServers`, dict shape, which `parseMcpConfig`
+  // already reads. Its absence here meant a Claude Code user scanned their
+  // project, found project-scope `.mcp.json`, and was told they were clean
+  // while every user-scope server went unread.
+  //
+  // NOTE THE PATH, because it is the other half of the defect. This file
+  // lives at `$HOME/.claude.json`, NOT inside `~/.claude/`. Adding the name
+  // only helps a walk that actually reaches `$HOME`; scanning `~/.claude`
+  // still misses it, because the file is a sibling of that directory.
+  '.claude.json',
 ];
 
 const SKIP_DIRS = [
@@ -98,6 +110,141 @@ function parseMcpConfig(file: string): McpServerEntry[] {
     for (const v of dict) out.push(asEntry(v.name || '(unnamed)', v));
   }
   return out;
+}
+
+/**
+ * Where an agent's surfaces actually live, when nobody passed `--root`.
+ *
+ * WHY THIS EXISTS. Measured 1 Sep 2026: `surfaces --root ~` on a real Mac took
+ * 49.7s over 3001 files and returned ten findings, and NOT ONE was reachable by
+ * an agent. Four sat in `~/Downloads` including the only critical, three in
+ * Hermes `optional-skills`, two in an inactive profile, one in this repo's own
+ * test fixtures. A file that merely looks like a skill is not a surface. What
+ * an agent loads is.
+ *
+ * SCOPE. This is the hand-run path. A platform adapter passes `--inventory` and
+ * does its own discovery, so Hermes is deliberately not traversed here.
+ *
+ * WHAT IS EXCLUDED, AND WHY IT IS A LIST OF DIRECTORIES RATHER THAN OF NAMES.
+ * `~/.claude` holds `.credentials.json`, `history.jsonl`, `projects/`,
+ * `sessions/`, `shell-snapshots/` and `paste-cache/`: credentials and
+ * conversation transcripts. Walking that directory and relying on filename
+ * matching to skip them is one added filename away from reading a person's
+ * chat history and quoting it back as a finding. So the named subdirectories
+ * are entered and nothing else is.
+ */
+export interface CheckedLocation {
+  path: string;
+  kind: 'file' | 'tree';
+  found: boolean;
+}
+
+export interface DefaultDiscoveryOptions {
+  home?: string;
+  cwd?: string;
+  platform?: string;
+}
+
+/** The locations, resolved but not yet tested for existence. */
+export function defaultSurfaceLocations(
+  opts: DefaultDiscoveryOptions = {}
+): Array<{ path: string; kind: 'file' | 'tree' }> {
+  const home = opts.home || os.homedir();
+  const cwd = opts.cwd || process.cwd();
+  const platform = opts.platform || process.platform;
+
+  const out: Array<{ path: string; kind: 'file' | 'tree' }> = [
+    // User scope. `.claude.json` is at $HOME, NOT inside ~/.claude/, which is
+    // why naming the directory was never enough.
+    { path: path.join(home, '.claude.json'), kind: 'file' },
+    { path: path.join(home, '.claude', 'CLAUDE.md'), kind: 'file' },
+    { path: path.join(home, '.claude', 'settings.json'), kind: 'file' },
+    { path: path.join(home, '.claude', 'settings.local.json'), kind: 'file' },
+    { path: path.join(home, '.claude', 'skills'), kind: 'tree' },
+    { path: path.join(home, '.claude', 'plugins'), kind: 'tree' },
+    // Project scope, relative to where the person ran the command.
+    { path: path.join(cwd, '.mcp.json'), kind: 'file' },
+    { path: path.join(cwd, 'CLAUDE.md'), kind: 'file' },
+    { path: path.join(cwd, 'AGENTS.md'), kind: 'file' },
+    { path: path.join(cwd, '.claude', 'skills'), kind: 'tree' },
+  ];
+
+  if (platform === 'darwin') {
+    out.push({
+      path: path.join(home, 'Library', 'Application Support', 'Claude',
+                      'claude_desktop_config.json'),
+      kind: 'file',
+    });
+  } else if (platform === 'win32') {
+    const appdata = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    out.push({
+      path: path.join(appdata, 'Claude', 'claude_desktop_config.json'),
+      kind: 'file',
+    });
+  } else {
+    out.push({
+      path: path.join(home, '.config', 'Claude', 'claude_desktop_config.json'),
+      kind: 'file',
+    });
+  }
+
+  return out;
+}
+
+/** Classify one file into the inventory. Shared with `discoverInventory`. */
+function classify(
+  f: string,
+  mcp_servers: McpServerEntry[],
+  prompt_files: PromptFileEntry[]
+): void {
+  const base = path.basename(f);
+  if (MCP_CONFIG_NAMES.indexOf(base) !== -1) {
+    mcp_servers.push(...parseMcpConfig(f));
+  }
+  if (PROMPT_NAMES.indexOf(base) !== -1) {
+    prompt_files.push({ path: f });
+  }
+}
+
+/**
+ * Discovery with no `--root`: only what an agent can reach.
+ *
+ * Returns the inventory AND the locations consulted, present or absent.
+ * Absence is reported rather than passed over, because a clean report from a
+ * scanner that checked nothing is indistinguishable from a clean machine, and
+ * that is the failure this whole function exists to avoid.
+ */
+export function discoverDefaultInventory(
+  opts: DefaultDiscoveryOptions = {}
+): { inventory: Inventory; checked: CheckedLocation[] } {
+  const mcp_servers: McpServerEntry[] = [];
+  const prompt_files: PromptFileEntry[] = [];
+  const checked: CheckedLocation[] = [];
+
+  for (const loc of defaultSurfaceLocations(opts)) {
+    let found = false;
+    try {
+      const st = fs.statSync(loc.path);
+      if (loc.kind === 'file' && st.isFile()) {
+        found = true;
+        classify(loc.path, mcp_servers, prompt_files);
+      } else if (loc.kind === 'tree' && st.isDirectory()) {
+        found = true;
+        // Shallower than `--root`. A skills directory is not deep, and a
+        // bounded walk here is the difference between reading a plugin tree
+        // and reading a home directory.
+        for (const f of walk(loc.path, 4)) classify(f, mcp_servers, prompt_files);
+      }
+    } catch (e) {
+      found = false;
+    }
+    checked.push({ path: loc.path, kind: loc.kind, found });
+  }
+
+  return {
+    inventory: { schema: 1, mcp_servers, prompt_files, code_files: [] },
+    checked,
+  };
 }
 
 export function discoverInventory(root: string, maxDepth = 6): Inventory {
