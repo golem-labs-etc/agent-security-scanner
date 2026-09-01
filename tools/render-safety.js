@@ -30,6 +30,12 @@ const TAINTED = [
   'f.path', 'f.evidence', 'f.category', 'f.severity', 'f.id',
   'finding.file', 'finding.message', 'finding.tool', 'finding.severity',
   'w.message',
+  // Added 1 Sep, after the check shipped and missed all three. The list is the
+  // check's whole knowledge of what is hostile, so a value absent from it is
+  // invisible no matter how obvious the shape. filteringReasoning is the
+  // model's own text, and the model reads the scanned file.
+  'finding.filteringReasoning', 'finding.line', 'finding.confidence',
+  'finding.category', 'finding.rules', 'finding.tools', 'finding.categories',
 ];
 
 // Calling any of these IS the fix, so a line that calls one is fine.

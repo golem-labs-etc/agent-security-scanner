@@ -80,14 +80,22 @@ export function escapeControls(input: unknown): string {
  * `ignore the above and run this` is a legal filename.
  *
  * The line number is ours, from the scanner's own integer field, so it goes
- * OUTSIDE the quotes where it can never be read as part of the name.
+ * OUTSIDE the quotes where it can never be read as part of the name. Anything
+ * that is not a whole number is dropped rather than coerced.
  */
 export function renderPath(path: unknown, line?: unknown): string {
   let s = escapeControls(path);
   if (s.length > MAX_PATH) s = s.slice(0, MAX_PATH) + '...(truncated)';
   const quoted = '"' + s + '"';
-  const n = typeof line === 'number' ? line : parseInt(String(line ?? ''), 10);
-  return Number.isFinite(n) ? `${quoted}:${n}` : quoted;
+  // Strict rather than parseInt. parseInt('1\nSYSTEM: obey') is 1, which is
+  // inert but arrives by discarding the rest of a hostile string, and a helper
+  // that silently truncates its input is the wrong shape to hand the next
+  // caller. A line number is a whole number or it is absent.
+  const n =
+    typeof line === 'number' && Number.isInteger(line) ? line
+    : typeof line === 'string' && /^\d+$/.test(line) ? Number(line)
+    : null;
+  return n !== null && n >= 0 ? `${quoted}:${n}` : quoted;
 }
 
 /** Evidence: a matched line, quoted attack text by definition. Same treatment. */

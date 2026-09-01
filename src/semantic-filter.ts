@@ -136,7 +136,7 @@ FINDING TO ANALYZE:
 Tool: ${renderField(finding.tool)}
 Severity: ${renderField(finding.severity)}
 File: ${renderPath(finding.file)}
-Line: ${finding.line || 'unknown'}
+Line: ${renderField(finding.line || 'unknown')}
 Message: ${escapeControls(finding.message)}
 
 CODE CONTEXT (surrounding the finding):

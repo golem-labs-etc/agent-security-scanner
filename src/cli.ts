@@ -521,7 +521,12 @@ function printCodeContext(filePath: string, line: number, scannedFiles: string[]
       const lineNum = i + 1;
       const marker = lineNum === line ? '>' : ' ';
       const gutter = String(lineNum).padStart(pad);
-      console.log(`   ${marker} ${gutter} | ${lines[i]}`);
+      // Sixth site, and the one the grep can never see: this is a raw source
+      // line out of the file under report, printed under --verbose. It is the
+      // same class as evidence and worse in volume, nine lines of it per
+      // finding. Escaped, not quoted, because a gutter already marks where the
+      // line begins and quoting every context line would make code unreadable.
+      console.log(`   ${marker} ${gutter} | ${escapeControls(lines[i])}`);
     }
     console.log('');
   } catch {
@@ -557,12 +562,14 @@ function printUnifiedReport(report: any, verboseFiles: string[] = []) {
       LOW: '🔵',
     };
 
-    const lineInfo = finding.line ? `:${finding.line}` : '';
-    const confidenceNote = finding.confidence ? ` [${finding.confidence} confidence]` : '';
+    // The line number is ours, an integer field, so renderPath places it outside
+    // the quotes where it can never read as part of the name. It is passed in
+    // rather than concatenated afterwards so there is one code path for both.
+    const confidenceNote = finding.confidence ? ` [${renderField(finding.confidence)} confidence]` : '';
     // Same values as the surfaces report, different command. Found by
     // tools/render-safety.js, not by the work order that fixed the other one,
     // which is the whole reason that check exists.
-    console.log(`${severityEmoji[finding.severity]} [${renderField(finding.severity)}] ${renderPath(finding.file)}${lineInfo}${confidenceNote}`);
+    console.log(`${severityEmoji[finding.severity]} [${renderField(finding.severity)}] ${renderPath(finding.file, finding.line)}${confidenceNote}`);
     // More than one category at one line means the rules disagree about what
     // the problem IS, not that one of them is noise. Both get named.
     const others = (finding.categories || []).filter((c) => c !== finding.category);
@@ -577,7 +584,13 @@ function printUnifiedReport(report: any, verboseFiles: string[] = []) {
       console.log(`   Rules: ${finding.rules.map((r: string) => renderField(r, 80)).join(', ')}`);
     }
     if (finding.filteringReasoning) {
-      console.log(`   Verification: ${finding.filteringReasoning}`);
+      // Fifth instance of the same bug, found 1 Sep by auditing the sites the
+      // grep does not know about. This string is the model's REASONING line,
+      // parsed at semantic-filter.ts:169. The model is fed the scanned file's
+      // content, so the text it echoes back is attacker-influenceable. The
+      // capture stops at U+000A, so it cannot forge a line break, but ESC,
+      // U+2028 and the bidi marks passed straight through to the terminal.
+      console.log(`   Verification: ${escapeControls(finding.filteringReasoning)}`);
     }
 
     // Verbose mode: show code context around the finding
