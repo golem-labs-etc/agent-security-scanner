@@ -140,6 +140,35 @@ Those grep patterns stay, for the same reason `.github/workflows/boundary.yml`
 keeps its: a check that cannot name what it is looking for cannot run. Patterns
 are accepted here; enumerated filenames are not.
 
+## Which GitHub account (added 1 Sep 2026)
+
+**Ask before the first write.** The first push, PR, comment, merge, release or
+advisory you make in a project: stop and ask which GitHub account it should come
+from. Do not infer it from the remote, from `gh auth status`, or from whichever
+credential happens to work. Getting a write accepted is not evidence it was
+attributed to the right person, and attribution on a public repository cannot be
+edited afterwards.
+
+The default here is **`golem-labs-etc`**, and never a personal account. That
+default does not remove the question; a project can want something else, and only
+the maintainer knows which.
+
+Three separate channels decide who gets named, and setting one does not set another:
+
+- **Commit author** is the email in the commit object. Check it:
+  `git config user.email` should print
+  `319544201+golem-labs-etc@users.noreply.github.com`.
+- **Push actor** is the credential that authenticates, not the commit email. An
+  HTTPS remote uses the OS keychain and will silently push as whoever is stored
+  there. Remotes here use the SSH alias `github.com-golem`. Check it:
+  `ssh -T git@github.com-golem` must answer `Hi golem-labs-etc!`.
+- **Web actions** (PR opens, merges, comments, GHSA filings) are attributed to
+  whoever is signed into the browser. They are permanent and no setting moves
+  them later.
+
+Several merge commits and pull requests on this public repository carry the wrong
+account because nobody asked this question before the first write.
+
 ## Changing any of this
 
 Ask the maintainer. Do not settle it in a commit message.
