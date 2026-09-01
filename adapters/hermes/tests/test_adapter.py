@@ -1347,6 +1347,73 @@ def run_all(tmp: Path, scanner) -> int:
         f"{st_d['baselined']} still baselined and still listed",
     )
 
+    print()
+    print("V22 session end warms the cache so turn one can announce")
+    # The defect: pre_llm_call reads the last COMPLETED scan, the scan is
+    # kicked at session START on a background thread, and it cannot finish
+    # before turn one. So a newly discovered finding could only ever land on
+    # turn two, and a single-turn session was never told at all.
+    hooks.reset_for_tests()
+
+    # POSITIVE 1: on_session_end kicks a scan. This is the whole fix.
+    kicks = []
+    real_kick = runner.kick_scan
+    runner.kick_scan = lambda *a, **k: (kicks.append(1), False)[1]
+    try:
+        hooks.on_session_end(session_id="v22a")
+        kicked = len(kicks) == 1
+
+        # NEGATIVE 1: it must still forget the session set. Adding the kick
+        # must not cost the behaviour the hook already had.
+        hooks.reset_for_tests()
+        runner._state.cache = {
+            "digest": "d",
+            "findings": [
+                {"id": "aaaa0001", "category": "hidden_instruction",
+                 "severity": "critical", "path": "/p/SKILL.md", "line": 1}
+            ],
+        }
+        hooks.pre_llm_call(session_id="v22b")
+        remembered = len(hooks._session_set("v22b")) == 1
+        hooks.on_session_end(session_id="v22b")
+        forgotten = len(hooks._session_set("v22b")) == 0
+
+        # NEGATIVE 2: a kick that raises must not propagate out of the hook,
+        # and must not stop the session set being dropped. A crash here would
+        # surface inside Hermes' own session teardown.
+        def _boom(*a, **k):
+            raise RuntimeError("scanner exploded")
+        runner.kick_scan = _boom
+        hooks.pre_llm_call(session_id="v22c")
+        raised = False
+        try:
+            hooks.on_session_end(session_id="v22c")
+        except Exception:
+            raised = True
+        survived = not raised and len(hooks._session_set("v22c")) == 0
+    finally:
+        runner.kick_scan = real_kick
+
+    # POSITIVE 2: the point of the warm cache. A session opening against a
+    # cache that already holds an unbaselined finding announces on its FIRST
+    # pre_llm_call, not its second.
+    hooks.reset_for_tests()
+    runner._state.cache = {
+        "digest": "d",
+        "findings": [
+            {"id": "bbbb0002", "category": "hidden_instruction",
+             "severity": "critical", "path": "/p/SKILL.md", "line": 2}
+        ],
+    }
+    turn_one = hooks.pre_llm_call(session_id="v22d")
+    announced_on_turn_one = turn_one is not None and bool(turn_one.get("context"))
+
+    check("V22",
+          kicked and remembered and forgotten and survived
+          and announced_on_turn_one,
+          f"kicked={kicked}, still forgets={forgotten}, "
+          f"kick failure contained={survived}, turn-one announce={announced_on_turn_one}")
+
     return report()
 
 
