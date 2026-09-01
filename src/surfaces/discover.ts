@@ -27,6 +27,17 @@ const MCP_CONFIG_NAMES = [
   'mcp_servers.json',
   'claude_desktop_config.json',
   'settings.json',
+  // Claude Code's USER-scope MCP servers. Verified 1 Sep 2026 on a real
+  // install: top-level `mcpServers`, dict shape, which `parseMcpConfig`
+  // already reads. Its absence here meant a Claude Code user scanned their
+  // project, found project-scope `.mcp.json`, and was told they were clean
+  // while every user-scope server went unread.
+  //
+  // NOTE THE PATH, because it is the other half of the defect. This file
+  // lives at `$HOME/.claude.json`, NOT inside `~/.claude/`. Adding the name
+  // only helps a walk that actually reaches `$HOME`; scanning `~/.claude`
+  // still misses it, because the file is a sibling of that directory.
+  '.claude.json',
 ];
 
 const SKIP_DIRS = [
