@@ -466,22 +466,49 @@ program
           });
       }
 
+      // Deduplicate and generate report.
+      //
+      // Paths are relativised BEFORE dedup, not after: the dedup key is built
+      // from the file path, so rewriting afterwards would leave keys naming a
+      // directory that no longer exists, and two runs of the same repo would
+      // never agree.
+      if (options.repo && scanDir) {
+        allToolFindings = relativiseFindings(allToolFindings, scanDir);
+        allSemanticFindings = relativiseFindings(allSemanticFindings, scanDir);
+      }
+      let unifiedFindings = deduplicator.deduplicate(allSemanticFindings, allToolFindings);
+
       // The interpreter: one bounded question per finding, on the user's key.
       //
-      // It runs AFTER the engines and its output is attached to findings rather
-      // than merged into them. applyInterpretations is the only writer, and it
-      // writes two fields; nothing here can drop a finding or move a severity.
+      // AFTER dedup, deliberately. It used to run before, so a line carrying two
+      // engine rules was interpreted twice and the report — which collapses that
+      // line into one finding — showed one answer and discarded the other. On the
+      // sample project that was six calls for five findings: one paid for, never
+      // rendered, measured in the captured fixture.
+      //
+      // Interpreting the collapsed finding is also the more honest question. The
+      // reader sees one problem at one line; asking about it once is asking about
+      // what they will act on, and the finding carries every contributing rule in
+      // `rules` so nothing is hidden from the prompt.
+      //
+      // It still runs AFTER the engines and its output is attached rather than
+      // merged. applyInterpretations remains the only writer and writes two
+      // fields; nothing here can drop a finding or move a severity.
       let interpreterTotals: { input: number; output: number; calls: number } | null = null;
-      if (useAI && allToolFindings.length > 0) {
+      if (useAI && unifiedFindings.length > 0) {
         const interp = new Interpreter();
-        say(`\nInterpreting ${allToolFindings.length} finding(s) with ${resolveProvider()}...`);
+        say(`\nInterpreting ${unifiedFindings.length} finding(s) with ${resolveProvider()}...`);
         const byIndex = new Map<number, Interpretation>();
-        for (let i = 0; i < allToolFindings.length; i++) {
-          const f: any = allToolFindings[i];
-          const text = f.file ? readFileForWindow(f.file) : null;
+        for (let i = 0; i < unifiedFindings.length; i++) {
+          const f: any = unifiedFindings[i];
+          // Under --repo the path is relative by now, and the clone still
+          // exists: cleanup runs after the report. Resolve against the scan
+          // root so the window can still be read.
+          const abs = f.file && !path.isAbsolute(f.file) && scanDir ? path.join(scanDir, f.file) : f.file;
+          const text = abs ? readFileForWindow(abs) : null;
           byIndex.set(i, await interp.interpret(f, text));
         }
-        allToolFindings = applyInterpretations(allToolFindings, byIndex);
+        unifiedFindings = applyInterpretations(unifiedFindings, byIndex);
         interpreterTotals = interp.totals();
         // Never a bare zero. A run where every call failed reads nothing like a
         // run that had nothing to do, and the first version printed the same
@@ -496,17 +523,6 @@ program
         }
       }
 
-      // Deduplicate and generate report.
-      //
-      // Paths are relativised BEFORE dedup, not after: the dedup key is built
-      // from the file path, so rewriting afterwards would leave keys naming a
-      // directory that no longer exists, and two runs of the same repo would
-      // never agree.
-      if (options.repo && scanDir) {
-        allToolFindings = relativiseFindings(allToolFindings, scanDir);
-        allSemanticFindings = relativiseFindings(allSemanticFindings, scanDir);
-      }
-      const unifiedFindings = deduplicator.deduplicate(allSemanticFindings, allToolFindings);
       const report = deduplicator.generateReport(unifiedFindings);
 
       // Close the cache BEFORE writing the report, not after. It is the only
