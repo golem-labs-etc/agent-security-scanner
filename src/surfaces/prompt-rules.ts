@@ -231,6 +231,28 @@ function firstMatch(res: RegExp[], s: string): RegExpExecArray | null {
   return null;
 }
 
+/**
+ * The full raw source line containing `index`, for evidence that shows a
+ * reviewer the surrounding context (a table cell, a quote, a heading) rather
+ * than the bare regex match. `m[0]` alone strips exactly the context that
+ * marks a documented example as an example -- a skill teaching eval-writing
+ * reported `high prompt_injection` on a row reading
+ * `| **Adversarial** | "Ignore previous instructions ..." |`, and the evidence
+ * recorded only the sentence, so the finding could not be adjudicated without
+ * opening the file. Length-capped the same way every other evidence string in
+ * this file is.
+ *
+ * Read from `raw`, not from the masked `prose`/`fenced` copies: those blank
+ * code spans out, and blanked context is the thing this exists to restore.
+ * Offsets are shared across all three, one character out for one in.
+ */
+function rawLineAt(src: string, index: number): string {
+  const start = src.lastIndexOf('\n', Math.max(0, index - 1)) + 1;
+  let end = src.indexOf('\n', index);
+  if (end === -1) end = src.length;
+  return src.slice(start, end).trim().slice(0, 200);
+}
+
 /** Normalize a CSS colour to a comparable token. */
 function normColour(v: string): string {
   let c = v.trim().toLowerCase().replace(/\s+/g, '');
@@ -346,7 +368,7 @@ export function scanPromptFile(
   for (const re of OVERRIDE_RE) {
     const rx = new RegExp(re.source, re.flags.indexOf('g') === -1 ? re.flags + 'g' : re.flags);
     eachMatch(rx, prose, (m) => {
-      push('prompt_injection', 'high', lineAt(raw, m.index), m[0].trim());
+      push('prompt_injection', 'high', lineAt(raw, m.index), rawLineAt(raw, m.index));
     });
   }
 
@@ -356,7 +378,7 @@ export function scanPromptFile(
     eachMatch(rx, fenced, (m) => {
       const v = fenceVerdict(policy, 'prompt_injection', 'high');
       push(v.category, v.severity, lineAt(raw, m.index),
-           'in fenced block: ' + m[0].trim());
+           'in fenced block: ' + rawLineAt(raw, m.index));
     });
   }
 
