@@ -210,6 +210,15 @@ const NEGATIVE = [
     rule: 'and no exfiltration_instruction under strict, at any severity',
     check: (r) => r.counts.critical === 0 && r.counts.high === 0
       && !r.findings.some((x) => x.category === 'exfiltration_instruction') },
+  // A codegen provenance banner is the single most common html comment in a
+  // generated skill file, and `AGENT_REF` matched the bare `agent` inside
+  // `agent.json` -- `.` and `/` are non-word characters, so the word boundary
+  // holds inside a path. Combined with `do not` on IMPERATIVE_VERB, the
+  // `addressed` path alone reported this harmless banner as a CRITICAL
+  // hidden_instruction. Measured on `openclaw/clawhub`, where it fired twice.
+  { id: 'N15', fixture: 'N15_codegen_banner.md', kind: 'prompt',
+    rule: 'codegen banner naming an agent.json source is not hidden_instruction',
+    check: (r) => !r.findings.some((x) => x.category === 'hidden_instruction') },
 ];
 
 /**
