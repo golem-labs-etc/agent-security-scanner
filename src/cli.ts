@@ -15,6 +15,7 @@ import { resolveProvider, resolveApiKey } from './env-key';
 import { MARK } from './brand';
 import { verdictLine, actionFor, isAuditClass, Frame } from './verdict';
 import { relativiseFindings } from './finding-paths';
+import { Interpreter, applyInterpretations, triagedFalsePositives, readFileForWindow, interpretationSummary, Interpretation } from './interpreter';
 
 // `quiet` suppresses dotenvx's "injected env (1) from .env" banner, which it
 // writes to STDOUT at import time. That banner was the first line of every
@@ -312,13 +313,13 @@ program
       }
 
       const aiAnalyzer = useAI ? new AIAnalyzer() : null;
-      const staticAnalyzer = useAI ? null : new StaticAnalyzer();
+      const staticAnalyzer = new StaticAnalyzer();
       if (useAI) {
         const provider = resolveProvider();
         const resolved = resolveApiKey(provider);
         const via = resolved.source === 'ANTHROPIC_API_KEY' ? ' (via ANTHROPIC_API_KEY)' : '';
         say(`AI analysis enabled via ${provider}${via}. Set AI_PROVIDER to switch.\n`);
-      } else if (staticAnalyzer!.needsRuleDownload()) {
+      } else if (staticAnalyzer.needsRuleDownload()) {
         // Disclosed, not buried: the only time semgrep touches the network.
         say('First semgrep run on this machine: rules will be downloaded to ~/.semgrep.');
         say('Later runs use that cache and need no network.\n');
@@ -387,14 +388,23 @@ program
       // pays ~2.5s of startup per invocation, and npm audit is a property of a
       // directory. Only the AI path is per-file, because that is an API call
       // per file and the cache is keyed on file content.
-      if (!useAI) {
-        const { findings: staticFindings, engines } = await staticAnalyzer!.scan(files, scanDir, {
+      // The engines always run. `--ai` adds interpretation on top of them and
+      // never replaces them: an engine result is deterministic and reproducible,
+      // a model's reading of it is neither, and the report has to be able to say
+      // which layer produced which sentence.
+      {
+        const { findings: staticFindings, engines } = await staticAnalyzer.scan(files, scanDir, {
           disposableTree: Boolean(options.repo),
         });
         allToolFindings.push(...staticFindings);
         engineRuns = engines;
 
-        say('Static analysis (no API key). Add --ai for semantic analysis.');
+        // The banner names the mode actually running. It used to say "no API
+        // key" unconditionally, including on --ai runs, because the static
+        // block became unconditional when the engines stopped being optional.
+        say(useAI
+          ? `Static analysis, then AI interpretation via ${resolveProvider()}.`
+          : 'Static analysis (no API key). Add --ai to interpret each finding.');
         for (const line of StaticAnalyzer.describe(engines)) say(line);
         say('');
 
@@ -418,29 +428,6 @@ program
       for (const file of files) {
         if (!fs.existsSync(file)) continue;
         const code = fs.readFileSync(file, 'utf-8');
-
-        if (useAI) {
-          let semanticResult;
-          if (options.cache !== false) {
-            semanticResult = await cache.get(code);
-          }
-
-          if (!semanticResult) {
-            say(`⏳ ${file}...`);
-            semanticResult = await aiAnalyzer!.analyze(code, file);
-
-            if (options.cache !== false) {
-              await cache.set(code, semanticResult);
-            }
-          }
-
-          // Inject file path into each finding
-          const findWithFile = (semanticResult.findings || []).map((f: any) => ({
-            ...f,
-            file: file,
-          }));
-          allSemanticFindings.push(...findWithFile);
-        }
 
         // Tool-based scans (always available, no AI needed)
         const toolOptions = {
@@ -477,6 +464,36 @@ program
             (modified as any).filteringReasoning = f.reasoning;
             return modified;
           });
+      }
+
+      // The interpreter: one bounded question per finding, on the user's key.
+      //
+      // It runs AFTER the engines and its output is attached to findings rather
+      // than merged into them. applyInterpretations is the only writer, and it
+      // writes two fields; nothing here can drop a finding or move a severity.
+      let interpreterTotals: { input: number; output: number; calls: number } | null = null;
+      if (useAI && allToolFindings.length > 0) {
+        const interp = new Interpreter();
+        say(`\nInterpreting ${allToolFindings.length} finding(s) with ${resolveProvider()}...`);
+        const byIndex = new Map<number, Interpretation>();
+        for (let i = 0; i < allToolFindings.length; i++) {
+          const f: any = allToolFindings[i];
+          const text = f.file ? readFileForWindow(f.file) : null;
+          byIndex.set(i, await interp.interpret(f, text));
+        }
+        allToolFindings = applyInterpretations(allToolFindings, byIndex);
+        interpreterTotals = interp.totals();
+        // Never a bare zero. A run where every call failed reads nothing like a
+        // run that had nothing to do, and the first version printed the same
+        // "0 calls, 0 tokens" line for both.
+        const summary = interpretationSummary(byIndex.size, interpreterTotals, interp.failures);
+        say(`  ${summary}`);
+        say('  Interpretation is best effort and never changes a finding.\n');
+        // A run where nothing was interpreted is a partial result, and partial
+        // results go to stderr as well, like a skipped engine.
+        if (interpreterTotals.calls === 0 && byIndex.size > 0) {
+          console.error(`warning: AI interpretation: ${summary}`);
+        }
       }
 
       // Deduplicate and generate report.
@@ -606,7 +623,14 @@ function printUnifiedReport(
   //
   // Not passed through renderField: every character of it is generated here
   // from integers and fixed strings, with no tool output interpolated.
-  console.log(`${verdictLine(findings, engines, frame, fileCount)}\n`);
+  // The verdict is computed from the ENGINE results only. `--ai` may append a
+  // best-effort count after it; it can never change a severity claim, because
+  // verdictLine never sees an interpretation.
+  const triaged = triagedFalsePositives(findings);
+  const tail = triaged > 0
+    ? ` ${triaged} finding${triaged === 1 ? '' : 's'} triaged likely false positive by AI review (best effort).`
+    : '';
+  console.log(`${verdictLine(findings, engines, frame, fileCount)}${tail}\n`);
 
   console.log(`📊 Summary:`);
   console.log(`  Total Issues: ${summary.total}`);
@@ -660,6 +684,42 @@ function printUnifiedReport(
     // rule does not support one: see actionFor.
     const action = actionFor(finding);
     if (action) console.log(`   Action: ${escapeControls(action)}`);
+
+    // The interpretation, labelled as a separate layer. The engine said the
+    // finding; the model said this. A reader must never have to guess which.
+    if (finding.interpretation) {
+      const it = finding.interpretation;
+      const TRIAGE_LABEL: Record<string, string> = {
+        looks_real: 'looks real',
+        likely_false_positive: 'likely false positive',
+        needs_human: 'needs a human',
+      };
+      if (it.skipped) {
+        // Not an opinion. Say plainly that no review happened and why, so this
+        // can never be mistaken for "the reviewer looked and had nothing to add".
+        console.log(`   AI review: NOT AVAILABLE — ${escapeControls(it.skipped)}`);
+        console.log(`     ${escapeControls(it.explanation)}`);
+      } else {
+        // NOT renderField. That escaper is for values a tool or a model
+        // supplied; it allows [A-Za-z0-9._-] and turns everything else into
+        // '?', which rendered "needs a human" as "needs?a?human". This label is
+        // a literal chosen from a closed enum in this file, so there is nothing
+        // untrusted to escape. `it.triage` is only reached when the enum check
+        // already passed, and it is escaped, because that is the model's word.
+        const label = TRIAGE_LABEL[it.triage] || renderField(it.triage);
+        console.log(`   AI review (best effort): ${label}`);
+        console.log(`     ${escapeControls(it.explanation)}`);
+      }
+      if (it.suggested_fix) {
+        // Rendered, never applied. The scanner does not write to the tree it
+        // was pointed at, and a diff from a model reading attacker-authored
+        // code is the last thing that should be an exception to that.
+        console.log('     Suggested fix (not applied):');
+        for (const l of String(it.suggested_fix).split('\n').slice(0, 40)) {
+          console.log(`       ${escapeControls(l)}`);
+        }
+      }
+    }
 
     if (finding.filteringReasoning) {
       // Fifth instance of the same bug, found 1 Sep by auditing the sites the
