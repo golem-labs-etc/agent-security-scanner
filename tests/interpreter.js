@@ -328,5 +328,53 @@ for (const f of captures) {
     withDiff.suggested_fix.slice(0, 80));
 }
 
+// ── 11. Interpretation happens AFTER dedup. ────────────────────────────────
+//
+// It used to run before. A line carrying two engine rules was interpreted
+// twice, and the report — which collapses that line into one finding — showed
+// one answer and discarded the other. Measured on the sample project: six calls
+// for five findings, one paid for and never rendered. The captured fixture
+// still records that run, which is why it holds three diffs while the report
+// showed two.
+//
+// This asserts the invariant rather than the wiring: one interpretation per
+// finding the reader will actually see.
+
+{
+  const dedup = new FindingsDeduplicator();
+  // Two rules on one line, exactly like src/render.js:3 in the sample project.
+  const raw = [
+    { tool: 'semgrep', severity: 'MEDIUM', file: 'src/render.js', line: 3, message: 'raw-html-format',
+      category: 'xss', details: { check_id: 'javascript.express.security.injection.raw-html-format' } },
+    { tool: 'semgrep', severity: 'MEDIUM', file: 'src/render.js', line: 3, message: 'direct-response-write',
+      category: 'xss', details: { check_id: 'javascript.express.security.audit.xss.direct-response-write' } },
+    { tool: 'semgrep', severity: 'HIGH', file: 'src/users.js', line: 6, message: 'sql', category: 'sql_injection' },
+  ];
+  const unified = dedup.deduplicate([], raw);
+
+  ok('I11  the collapsing pair really does collapse',
+    raw.length === 3 && unified.length === 2, `${raw.length} raw -> ${unified.length} unified`);
+
+  // One call per finding the reader sees, not per engine hit.
+  const byIndex = new Map(unified.map((f, i) => [i, {
+    explanation: 'e', triage: 'looks_real', suggested_fix: null, usage: { input: 10, output: 5 },
+  }]));
+  const out = applyInterpretations(unified, byIndex);
+
+  ok('I11b one interpretation per reported finding',
+    byIndex.size === unified.length, `${byIndex.size} interpretations for ${unified.length} findings`);
+  ok('I11c interpreting the unified list costs fewer calls than the raw list',
+    byIndex.size < raw.length, `${byIndex.size} vs ${raw.length}`);
+  ok('I11d every reported finding carries one',
+    out.every((f) => f.interpretation && f.interpretedBy === 'ai'));
+  // Found by index first, which was wrong: findings sort by severity, so
+  // out[0] is the HIGH sql finding, not the collapsed MEDIUM one. Selected by
+  // identity instead of by position.
+  const collapsed = out.find((f) => f.file === 'src/render.js');
+  ok('I11e and dedup still collapsed both rules onto it',
+    collapsed && collapsed.rules && collapsed.rules.length === 2,
+    JSON.stringify(collapsed && collapsed.rules));
+}
+
 console.log(`\n  interpreter: ${failures} failure(s)\n`);
 process.exit(failures > 0 ? 1 : 0);
