@@ -219,6 +219,18 @@ const NEGATIVE = [
   { id: 'N15', fixture: 'N15_codegen_banner.md', kind: 'prompt',
     rule: 'codegen banner naming an agent.json source is not hidden_instruction',
     check: (r) => !r.findings.some((x) => x.category === 'hidden_instruction') },
+  // The same defect one shape further out, and the reason the first fix was
+  // not enough: a hyphenated filename keeps the word boundary after `agent`
+  // and never reaches an extension, so `agent-skills-main.md` slipped straight
+  // past a lookahead written for `agent.json`.
+  //
+  // The banner here is copied byte for byte from openclaw/clawhub at
+  // 3c9d4f12109bfd9b3ef8a42033228770f1bbe1d1,
+  // `.agents/skills/convex/SKILL.md`:6 -- the second of the two criticals that
+  // repo produced, and the one still standing after N15 went green.
+  { id: 'N17', fixture: 'N17_codegen_banner_hyphenated.md', kind: 'prompt',
+    rule: 'codegen banner naming a hyphenated agent-*.md source is not hidden_instruction',
+    check: (r) => !r.findings.some((x) => x.category === 'hidden_instruction') },
 ];
 
 /**
