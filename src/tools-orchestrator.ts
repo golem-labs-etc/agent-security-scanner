@@ -665,7 +665,10 @@ export class ToolsOrchestrator {
           // No line: an advisory is about a dependency, not a source location.
           message: `${name}: ${title}${range}${url ? ` — ${url}` : ''}${alsoCount}`,
           category: 'vulnerable_dependency',
-          details: v,
+          // `name` and `fixAvailable` are read by verdict.ts to build the
+          // action sentence. Named here so a future narrowing of `details`
+          // cannot drop them without this comment showing up in the diff.
+          details: { ...v, name: v?.name ?? name, fixAvailable: v?.fixAvailable },
         });
       }
     }
