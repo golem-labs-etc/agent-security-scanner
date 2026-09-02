@@ -247,15 +247,85 @@ ok('I9g a fenced reply with a triage outside the enum still degrades',
 ok('I9h a fenced reply with no explanation still degrades',
   parseInterpretation('```json\n{"triage":"looks_real"}\n```').triage === 'needs_human');
 
-// The captured-reply fixtures parse. Constructed ones say so in line one.
+// ── 10. The captured replies. ──────────────────────────────────────────────
+//
+// Real output from anthropic/claude-haiku-4-5, captured with GLANCE_AI_RAW on
+// the sample project. This is the fixture that matters: the parser's job is to
+// cope with what a model actually sends, and three runs were lost to a guess
+// about that.
+//
+// Note the shape it actually arrives in — EVERY reply is fenced with a ```json
+// tag. The first version of the parser called JSON.parse on the whole reply,
+// so every one of these degraded to needs_human.
+
 const RAW = path.join(FIX, 'raw-replies');
-for (const f of fs.readdirSync(RAW).filter((n) => n.endsWith('.txt'))) {
+const captures = fs.readdirSync(RAW).filter((n) => n.startsWith('captured-') && n.endsWith('.txt'));
+ok('I10  at least one CAPTURED reply fixture exists', captures.length > 0,
+  'raw-replies/ holds no captured-*.txt; a constructed fixture is not a substitute');
+
+for (const f of captures) {
   const body = fs.readFileSync(path.join(RAW, f), 'utf8');
-  const constructed = /^CONSTRUCTED, NOT CAPTURED/.test(body);
-  const r = parseInterpretation(body);
-  ok(`I9i ${f}${constructed ? ' (constructed)' : ' (captured)'} parses`,
-    r.triage !== 'needs_human' || /needs_human/.test(body),
-    `triage=${r.triage}`);
+  // A capture is a log: several replies separated by the marker the capture
+  // writes. Split and assert each, rather than parsing the first and calling
+  // the file covered.
+  const replies = body.split(/^--- reply .*---$/m).map((r) => r.trim()).filter(Boolean);
+  ok(`I10b ${f} holds more than one reply`, replies.length > 1, `${replies.length} found`);
+
+  const triages = [];
+  for (let i = 0; i < replies.length; i++) {
+    const r = parseInterpretation(replies[i]);
+    ok(`I10c ${f} reply ${i + 1} parses to a real triage`,
+      r.triage === 'looks_real' || r.triage === 'likely_false_positive',
+      `triage=${r.triage} :: ${r.explanation.slice(0, 90)}`);
+    triages.push(r);
+  }
+
+  // Every one of these arrived fenced. If a future capture does not, the
+  // envelope changed and this line is where that shows up.
+  ok(`I10d ${f}: every reply is fenced`,
+    replies.every((r) => r.startsWith('```')),
+    'a reply arrived unfenced; the envelope assumption has changed');
+
+  // The known shape of this run, so a parser regression that silently turns
+  // real answers into needs_human cannot pass.
+  const real = triages.filter((t) => t.triage === 'looks_real').length;
+  const fp = triages.filter((t) => t.triage === 'likely_false_positive').length;
+  const diffs = triages.filter((t) => t.suggested_fix).length;
+  // 5 looks_real, 1 likely_false_positive, THREE diffs.
+  //
+  // The run was reported as having two. It has three, and the third is
+  // invisible for a real reason: the interpreter runs BEFORE dedup, so
+  // src/render.js:3 — one line carrying two semgrep rules — gets two calls and
+  // two answers, and the report collapses them into one finding showing one of
+  // them. The second diff was paid for and never displayed.
+  //
+  // Asserted at the true number so the fixture records what the run actually
+  // produced, not what the rendered report showed. See M5-style note in the PR:
+  // interpreting after dedup would have saved that call.
+  ok(`I10e ${f}: 5 looks_real, 1 likely_false_positive, 3 diffs`,
+    real === 5 && fp === 1 && diffs === 3,
+    `looks_real=${real} likely_false_positive=${fp} diffs=${diffs}`);
+
+  // The duplicate pair is the evidence for the line above: two replies about
+  // the same file, from one collapsed finding.
+  const renderReplies = triages.filter((t) => /render\.js/.test(t.suggested_fix || '')).length;
+  ok(`I10h ${f}: two replies answer the same collapsed finding`,
+    renderReplies === 2,
+    `${renderReplies} replies mention render.js in a diff — pre-dedup interpretation`);
+
+  // The false positive is the CSRF finding, reasoned from GET-only routes.
+  // Asserted because it is the one reply that shows the interpreter doing the
+  // thing it exists for: disagreeing with an engine, without overruling it.
+  const theFp = triages.find((t) => t.triage === 'likely_false_positive');
+  ok(`I10f ${f}: the false positive reasons about GET-only routes`,
+    /GET/.test(theFp.explanation) && /CSRF/i.test(theFp.explanation),
+    theFp.explanation.slice(0, 120));
+
+  // A diff carries real patch structure, not prose.
+  const withDiff = triages.find((t) => t.suggested_fix);
+  ok(`I10g ${f}: a suggested fix is a unified diff`,
+    /^---\s|\n---\s/.test(withDiff.suggested_fix) && /\n\+/.test(withDiff.suggested_fix),
+    withDiff.suggested_fix.slice(0, 80));
 }
 
 console.log(`\n  interpreter: ${failures} failure(s)\n`);

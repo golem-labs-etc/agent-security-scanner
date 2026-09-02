@@ -1,4 +1,0 @@
-CONSTRUCTED, NOT CAPTURED. Replace with a real reply when one is captured.
-```json
-{"explanation": "The value reaches the query argument unparameterised, and req.params.id is attacker-controlled.", "triage": "looks_real", "suggested_fix": "--- a/src/users.js\n+++ b/src/users.js\n-  db.all(query)\n+  db.all(sql, [id])\n"}
-```
