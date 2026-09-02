@@ -13,6 +13,15 @@ export interface UnifiedFinding {
   rules: string[];
   /** Every taxonomy id contributed here. More than one means genuinely distinct problems. */
   categories: string[];
+  /**
+   * The AI layer's reading of this finding, when `--ai` ran. Carried through
+   * dedup rather than rebuilt: the unified finding is a NEW object, so anything
+   * not copied here is silently dropped. It was, once — interpretations were
+   * requested, paid for, and discarded before the report, which looked exactly
+   * like `--ai` doing nothing.
+   */
+  interpretation?: any;
+  interpretedBy?: string;
   confidence?: 'HIGH' | 'MEDIUM' | 'LOW'; // Semantic filter confidence
   isFalsePositive?: boolean; // Marked by semantic filter
   filteringReasoning?: string; // Why semantic filter marked it as FP or real
@@ -75,6 +84,8 @@ export class FindingsDeduplicator {
           rules: [this.ruleName(finding)].filter(Boolean),
           categories: [finding.category || finding.tool].filter(Boolean),
           details: finding.details,
+          interpretation: (finding as any).interpretation,
+          interpretedBy: (finding as any).interpretedBy,
         });
       } else {
         this.fold(unified.get(key)!, {

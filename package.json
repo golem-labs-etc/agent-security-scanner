@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc && node tools/provenance.js stamp",
     "dev": "ts-node src/cli.ts",
-    "test": "node tools/provenance.js check && node tools/render-safety.js && node tests/validate.js && node tests/semgrep-skip.js && node tests/surfaces.js && node tests/discovery.js && node tests/render-safe.js && node tests/pipe.js && node tests/verdict.js",
+    "test": "node tools/provenance.js check && node tools/render-safety.js && node tests/validate.js && node tests/semgrep-skip.js && node tests/surfaces.js && node tests/discovery.js && node tests/render-safe.js && node tests/pipe.js && node tests/verdict.js && node tests/finding-paths.js && node tests/interpreter.js",
     "start": "node dist/cli.js",
     "check-dist": "node tools/provenance.js check",
     "check-dist:release": "node tools/provenance.js check --release",
