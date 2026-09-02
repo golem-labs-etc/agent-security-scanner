@@ -151,6 +151,49 @@ export function triagedFalsePositives(findings: Array<{ interpretation?: Interpr
   return findings.filter((f) => f.interpretation?.triage === 'likely_false_positive').length;
 }
 
+/**
+ * Why a call failed, in the words a reader can act on.
+ *
+ * The status code is the useful part and it is stated: a 401 is a key problem
+ * and a 429 is a rate limit, and telling someone "the reviewer could not be
+ * reached" for both wastes the one piece of information the provider gave.
+ */
+export function describeFailure(err: any): string {
+  const status = err?.response?.status;
+  if (status === 401 || status === 403) return `provider rejected the key (${status})`;
+  if (status === 429) return `provider rate-limited the request (429)`;
+  if (status && status >= 500) return `provider error (${status})`;
+  if (status) return `provider returned ${status}`;
+  if (err?.code === 'ECONNABORTED') return 'request timed out';
+  return String(err?.message || 'unknown error').slice(0, 120);
+}
+
+/**
+ * The one-line account of what interpretation actually did.
+ *
+ * NEVER a bare zero. A run where every call failed must say so and why; a run
+ * with nothing to interpret is a different sentence. Pure, so the invalid-key
+ * case is testable without a network.
+ */
+export function interpretationSummary(
+  total: number,
+  totals: { calls: number; input: number; output: number },
+  failures: Array<{ reason: string; status?: number }>
+): string {
+  if (total === 0) return 'Nothing to interpret: the engines produced no findings.';
+
+  if (totals.calls === 0) {
+    const why = failures.length ? failures[0].reason : 'no call completed';
+    return `0 of ${total} interpreted — ${why}. Every finding below is the engine's, uninterpreted.`;
+  }
+
+  const cost = `${totals.calls} call(s), ${totals.input} input tokens, ${totals.output} output tokens`;
+  if (failures.length) {
+    return `${totals.calls} of ${total} interpreted, ${failures.length} failed — ${failures[0].reason}. ${cost}.`;
+  }
+  return `${totals.calls} of ${total} interpreted. ${cost}.`;
+}
+
 const PROVIDERS: Record<string, { url: string; model: string; header: string }> = {
   anthropic: { url: 'https://api.anthropic.com/v1/messages', model: 'claude-haiku-4-5-20251001', header: 'x-api-key' },
   openai: { url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', header: 'authorization' },
@@ -163,6 +206,16 @@ export class Interpreter {
   private name: string;
   /** Every call's reported usage, in order. Never estimated. */
   public readonly usage: Array<{ input: number; output: number }> = [];
+  /**
+   * Every call that did not produce an interpretation, with why.
+   *
+   * Tracked separately from `usage` because a run where every call failed and
+   * a run with nothing to interpret both leave `usage` empty, and they are not
+   * the same event. Reported by an invalid key: the first version of this class
+   * printed "0 calls, 0 input tokens, 0 output tokens" and a normal report,
+   * which is the silent-zero failure wearing different clothes.
+   */
+  public readonly failures: Array<{ reason: string; status?: number }> = [];
 
   constructor() {
     this.name = resolveProvider();
@@ -269,12 +322,15 @@ export class Interpreter {
       if (usage) this.usage.push(usage);
       return { ...parseInterpretation(text), usage };
     } catch (err: any) {
+      const status = err?.response?.status;
+      const reason = describeFailure(err);
+      this.failures.push({ reason, status });
       return {
-        explanation: `The reviewer could not be reached (${escapeControls(String(err?.message || 'unknown')).slice(0, 160)}). The finding stands as the engine reported it.`,
+        explanation: `Not interpreted: ${reason}. The finding stands exactly as the engine reported it.`,
         triage: 'needs_human',
         suggested_fix: null,
         usage: null,
-        skipped: 'request-failed',
+        skipped: reason,
       };
     }
   }

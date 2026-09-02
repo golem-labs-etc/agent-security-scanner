@@ -22,8 +22,9 @@ const path = require('path');
 const fs = require('fs');
 
 const D = path.join(__dirname, '..', 'dist');
-const { parseInterpretation, applyInterpretations, codeWindow, isSecretClass, triagedFalsePositives } = require(path.join(D, 'interpreter'));
+const { parseInterpretation, applyInterpretations, codeWindow, isSecretClass, triagedFalsePositives, interpretationSummary, describeFailure } = require(path.join(D, 'interpreter'));
 const { stripDelimiters, containsDelimiter, canonicalize, fenceBlock, makeNonce, AUTHORITY_RULE } = require(path.join(D, 'prompt-armor'));
+const { FindingsDeduplicator } = require(path.join(D, 'deduplicator'));
 
 let failures = 0;
 function ok(label, pass, detail) {
@@ -138,6 +139,69 @@ ok('I6  secret-class findings are recognised',
   isSecretClass('hardcoded_secrets') && isSecretClass('vulnerable_dependency'));
 ok('I6b ordinary categories are not',
   !isSecretClass('sql_injection') && !isSecretClass('xss'));
+
+// ── 7. The invalid key. Found in a real run, not by this suite. ────────────
+//
+// An invalid key produced "AI analysis enabled", "Interpreting 2 finding(s)",
+// then "0 calls, 0 input tokens, 0 output tokens" and a normal report. No
+// error, no degradation notice. The no-key case failed loudly; the BAD-key
+// case failed silently, and a bad key is the common one -- an expired key, a
+// wrong environment, a copy-paste that took the placeholder.
+//
+// This is the silent zero again, in a third place. The rule is the same as it
+// is for a skipped engine: a thing that did not happen must never render as a
+// thing that happened and found nothing.
+
+ok('I7  a 401 is described as a key problem, with the code',
+  describeFailure({ response: { status: 401 } }) === 'provider rejected the key (401)',
+  describeFailure({ response: { status: 401 } }));
+ok('I7b a 429 is described as a rate limit', /rate-limited/.test(describeFailure({ response: { status: 429 } })));
+ok('I7c a timeout is described as one', describeFailure({ code: 'ECONNABORTED' }) === 'request timed out');
+
+const allFailed = interpretationSummary(2, { calls: 0, input: 0, output: 0 },
+  [{ reason: 'provider rejected the key (401)', status: 401 }]);
+ok('I7d every call failing says 0 of N, not a bare zero',
+  /^0 of 2 interpreted/.test(allFailed), allFailed);
+ok('I7e it names the cause', /rejected the key \(401\)/.test(allFailed), allFailed);
+ok('I7f it says the findings are uninterpreted',
+  /uninterpreted/.test(allFailed), allFailed);
+ok('I7g it does NOT read as a completed run',
+  !/^2 call/.test(allFailed) && !/0 input tokens, 0 output tokens\.$/.test(allFailed), allFailed);
+
+const partial = interpretationSummary(3, { calls: 2, input: 100, output: 50 },
+  [{ reason: 'provider rate-limited the request (429)' }]);
+ok('I7h a partial run reports both halves', /2 of 3 interpreted, 1 failed/.test(partial), partial);
+ok('I7i and still reports the cost', /100 input tokens, 50 output tokens/.test(partial), partial);
+
+const clean = interpretationSummary(2, { calls: 2, input: 800, output: 120 }, []);
+ok('I7j a clean run reports calls and cost', /^2 of 2 interpreted\. 2 call/.test(clean), clean);
+
+ok('I7k nothing to interpret is its own sentence, not a zero',
+  /Nothing to interpret/.test(interpretationSummary(0, { calls: 0, input: 0, output: 0 }, [])));
+
+// ── 8. The interpretation must survive dedup. ──────────────────────────────
+//
+// Also found by a real run, not by this suite. Dedup builds a NEW unified
+// object, so anything it does not copy is silently dropped. Interpretations
+// were requested, paid for, and discarded before the report — which is
+// indistinguishable from --ai doing nothing at all.
+
+{
+  const dedup = new FindingsDeduplicator();
+  const withInterp = [{
+    tool: 'semgrep', severity: 'HIGH', file: 'a.js', line: 3, message: 'm',
+    category: 'sql_injection',
+    interpretation: { explanation: 'e', triage: 'looks_real', suggested_fix: null, usage: null },
+    interpretedBy: 'ai',
+  }];
+  const unified = dedup.deduplicate([], withInterp);
+  ok('I8  the interpretation survives deduplication',
+    unified[0] && unified[0].interpretation && unified[0].interpretation.triage === 'looks_real',
+    JSON.stringify(unified[0] && unified[0].interpretation));
+  ok('I8b the layer label survives too', unified[0] && unified[0].interpretedBy === 'ai');
+  ok('I8c a run without --ai carries no interpretation field',
+    dedup.deduplicate([], [{ tool: 'semgrep', severity: 'LOW', file: 'b.js', line: 1, message: 'm' }])[0].interpretation === undefined);
+}
 
 console.log(`\n  interpreter: ${failures} failure(s)\n`);
 process.exit(failures > 0 ? 1 : 0);

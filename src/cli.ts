@@ -15,7 +15,7 @@ import { resolveProvider, resolveApiKey } from './env-key';
 import { MARK } from './brand';
 import { verdictLine, actionFor, isAuditClass, Frame } from './verdict';
 import { relativiseFindings } from './finding-paths';
-import { Interpreter, applyInterpretations, triagedFalsePositives, readFileForWindow, Interpretation } from './interpreter';
+import { Interpreter, applyInterpretations, triagedFalsePositives, readFileForWindow, interpretationSummary, Interpretation } from './interpreter';
 
 // `quiet` suppresses dotenvx's "injected env (1) from .env" banner, which it
 // writes to STDOUT at import time. That banner was the first line of every
@@ -399,7 +399,12 @@ program
         allToolFindings.push(...staticFindings);
         engineRuns = engines;
 
-        say('Static analysis (no API key). Add --ai for semantic analysis.');
+        // The banner names the mode actually running. It used to say "no API
+        // key" unconditionally, including on --ai runs, because the static
+        // block became unconditional when the engines stopped being optional.
+        say(useAI
+          ? `Static analysis, then AI interpretation via ${resolveProvider()}.`
+          : 'Static analysis (no API key). Add --ai to interpret each finding.');
         for (const line of StaticAnalyzer.describe(engines)) say(line);
         say('');
 
@@ -478,10 +483,17 @@ program
         }
         allToolFindings = applyInterpretations(allToolFindings, byIndex);
         interpreterTotals = interp.totals();
-        const t = interpreterTotals;
-        // Cost, as the provider reported it. Never estimated from length.
-        say(`  ${t.calls} call(s), ${t.input} input tokens, ${t.output} output tokens.`);
+        // Never a bare zero. A run where every call failed reads nothing like a
+        // run that had nothing to do, and the first version printed the same
+        // "0 calls, 0 tokens" line for both.
+        const summary = interpretationSummary(byIndex.size, interpreterTotals, interp.failures);
+        say(`  ${summary}`);
         say('  Interpretation is best effort and never changes a finding.\n');
+        // A run where nothing was interpreted is a partial result, and partial
+        // results go to stderr as well, like a skipped engine.
+        if (interpreterTotals.calls === 0 && byIndex.size > 0) {
+          console.error(`warning: AI interpretation: ${summary}`);
+        }
       }
 
       // Deduplicate and generate report.
@@ -682,8 +694,15 @@ function printUnifiedReport(
         likely_false_positive: 'likely false positive',
         needs_human: 'needs a human',
       };
-      console.log(`   AI review (best effort): ${renderField(TRIAGE_LABEL[it.triage] || it.triage)}`);
-      console.log(`     ${escapeControls(it.explanation)}`);
+      if (it.skipped) {
+        // Not an opinion. Say plainly that no review happened and why, so this
+        // can never be mistaken for "the reviewer looked and had nothing to add".
+        console.log(`   AI review: NOT AVAILABLE — ${escapeControls(it.skipped)}`);
+        console.log(`     ${escapeControls(it.explanation)}`);
+      } else {
+        console.log(`   AI review (best effort): ${renderField(TRIAGE_LABEL[it.triage] || it.triage)}`);
+        console.log(`     ${escapeControls(it.explanation)}`);
+      }
       if (it.suggested_fix) {
         // Rendered, never applied. The scanner does not write to the tree it
         // was pointed at, and a diff from a model reading attacker-authored
