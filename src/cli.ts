@@ -14,6 +14,7 @@ import { SemanticFilter } from './semantic-filter';
 import { resolveProvider, resolveApiKey } from './env-key';
 import { MARK } from './brand';
 import { verdictLine, actionFor, isAuditClass, Frame } from './verdict';
+import { relativiseFindings } from './finding-paths';
 
 // `quiet` suppresses dotenvx's "injected env (1) from .env" banner, which it
 // writes to STDOUT at import time. That banner was the first line of every
@@ -478,7 +479,16 @@ program
           });
       }
 
-      // Deduplicate and generate report
+      // Deduplicate and generate report.
+      //
+      // Paths are relativised BEFORE dedup, not after: the dedup key is built
+      // from the file path, so rewriting afterwards would leave keys naming a
+      // directory that no longer exists, and two runs of the same repo would
+      // never agree.
+      if (options.repo && scanDir) {
+        allToolFindings = relativiseFindings(allToolFindings, scanDir);
+        allSemanticFindings = relativiseFindings(allSemanticFindings, scanDir);
+      }
       const unifiedFindings = deduplicator.deduplicate(allSemanticFindings, allToolFindings);
       const report = deduplicator.generateReport(unifiedFindings);
 
