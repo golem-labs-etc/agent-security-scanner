@@ -87,6 +87,54 @@ export function codeWindow(fileText: string, line: number): { text: string; from
 }
 
 /**
+ * Pull the first complete JSON object out of a reply.
+ *
+ * Extraction is separate from validation ON PURPOSE, and the split is the
+ * whole fix. The first version called JSON.parse on the raw reply, so a model
+ * that wrapped its object in a markdown fence — which is what actually
+ * happened, six times out of six — failed the schema check and degraded to
+ * needs_human. The fail-safe behaved correctly and the happy path never ran.
+ *
+ * Loosening the SCHEMA would have been the wrong repair: the closed enum is
+ * what stops a malformed reply softening a finding. What was too strict was the
+ * envelope, not the contract. So this finds the object and hands it, unchanged,
+ * to exactly the same strict check as before.
+ *
+ * Brace counting is string-aware. A brace inside a JSON string literal, and an
+ * escaped quote inside that string, must not end the object — `{"a":"}"}` is
+ * one object, and a naive scan truncates it into invalid JSON and reports a
+ * parse failure that is really an extraction failure.
+ */
+export function extractJsonObject(raw: string): string | null {
+  const s = String(raw ?? '');
+  const start = s.indexOf('{');
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+
+    if (inString) {
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === '"') inString = false;
+      continue;
+    }
+
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
  * Parse the model's reply against a CLOSED schema.
  *
  * Anything that is not exactly the schema becomes `needs_human`. Never
@@ -101,9 +149,13 @@ export function parseInterpretation(raw: string): Omit<Interpretation, 'usage'> 
     suggested_fix: null,
   });
 
+  // Extract first, then validate. See extractJsonObject.
+  const candidate = extractJsonObject(raw);
+  if (candidate === null) return fallback('no JSON object in the reply');
+
   let obj: any;
   try {
-    obj = JSON.parse(String(raw ?? '').trim());
+    obj = JSON.parse(candidate);
   } catch {
     return fallback('not valid JSON');
   }
@@ -320,6 +372,19 @@ export class Interpreter {
       }
 
       if (usage) this.usage.push(usage);
+      // Opt-in capture of the raw reply, for building a parser fixture out of
+      // what a model ACTUALLY sends rather than what we imagine it sends. Off
+      // unless GLANCE_AI_RAW names a file. The reply can quote the scanned
+      // code, so this is never on by default and never goes anywhere but the
+      // path the user chose.
+      const rawPath = process.env.GLANCE_AI_RAW;
+      if (rawPath) {
+        try {
+          fs.appendFileSync(rawPath, `--- reply ${new Date().toISOString()} ---\n${text}\n`);
+        } catch {
+          /* capture is a convenience; never break a scan for it */
+        }
+      }
       return { ...parseInterpretation(text), usage };
     } catch (err: any) {
       const status = err?.response?.status;

@@ -22,7 +22,7 @@ const path = require('path');
 const fs = require('fs');
 
 const D = path.join(__dirname, '..', 'dist');
-const { parseInterpretation, applyInterpretations, codeWindow, isSecretClass, triagedFalsePositives, interpretationSummary, describeFailure } = require(path.join(D, 'interpreter'));
+const { parseInterpretation, applyInterpretations, codeWindow, isSecretClass, triagedFalsePositives, interpretationSummary, describeFailure, extractJsonObject } = require(path.join(D, 'interpreter'));
 const { stripDelimiters, containsDelimiter, canonicalize, fenceBlock, makeNonce, AUTHORITY_RULE } = require(path.join(D, 'prompt-armor'));
 const { FindingsDeduplicator } = require(path.join(D, 'deduplicator'));
 
@@ -46,7 +46,10 @@ const BAD = {
   'explanation missing': '{"triage":"likely_false_positive"}',
   'empty object': '{}',
   'null': 'null',
-  'prose wrapping valid JSON': 'Sure! {"explanation":"x","triage":"likely_false_positive"}',
+  // NOT here any more: 'prose wrapping valid JSON'. That case asserted the
+  // envelope had to be bare, and it was wrong -- a real run showed every reply
+  // arriving inside a markdown fence. It is now an ACCEPT case in group I9.
+  // The schema stayed strict; only the envelope loosened.
 };
 for (const [name, raw] of Object.entries(BAD)) {
   const r = parseInterpretation(raw);
@@ -201,6 +204,58 @@ ok('I7k nothing to interpret is its own sentence, not a zero',
   ok('I8b the layer label survives too', unified[0] && unified[0].interpretedBy === 'ai');
   ok('I8c a run without --ai carries no interpretation field',
     dedup.deduplicate([], [{ tool: 'semgrep', severity: 'LOW', file: 'b.js', line: 1, message: 'm' }])[0].interpretation === undefined);
+}
+
+// ── 9. Extraction, separately from validation. ─────────────────────────────
+//
+// Found by a real run: six of six replies parsed as malformed and degraded to
+// needs_human. The fail-safe was right and the happy path had never run. Every
+// reply arrived inside a markdown fence, and the first version called
+// JSON.parse on the whole thing.
+//
+// The repair is extraction, NOT a looser schema. The closed enum is what stops
+// a malformed reply softening a finding; what was too strict was the envelope.
+
+const ENVELOPES = {
+  'fenced with a json tag': '```json\n{"explanation":"e","triage":"looks_real"}\n```',
+  'fenced with no tag': '```\n{"explanation":"e","triage":"looks_real"}\n```',
+  'prose before': 'Here is my analysis:\n{"explanation":"e","triage":"looks_real"}',
+  'prose after': '{"explanation":"e","triage":"looks_real"}\nHope that helps.',
+  'prose both sides': 'Sure.\n```json\n{"explanation":"e","triage":"looks_real"}\n```\nLet me know.',
+  'leading whitespace and newlines': '\n\n   {"explanation":"e","triage":"looks_real"}',
+};
+for (const [name, raw] of Object.entries(ENVELOPES)) {
+  ok(`I9  ${name} -> parsed, not degraded`, parseInterpretation(raw).triage === 'looks_real',
+    JSON.stringify(parseInterpretation(raw).triage));
+}
+
+// Extraction must be string-aware or it truncates valid objects.
+ok('I9b a brace inside a string does not end the object',
+  extractJsonObject('noise {"a":"}","b":1} tail') === '{"a":"}","b":1}',
+  String(extractJsonObject('noise {"a":"}","b":1} tail')));
+ok('I9c an escaped quote inside a string is handled',
+  extractJsonObject('{"a":"say \\"hi\\"","b":2}') === '{"a":"say \\"hi\\"","b":2}',
+  String(extractJsonObject('{"a":"say \\"hi\\"","b":2}')));
+ok('I9d a nested object is taken whole',
+  extractJsonObject('x {"a":{"b":1}} y') === '{"a":{"b":1}}');
+ok('I9e no JSON at all returns null', extractJsonObject('I think it is fine.') === null);
+ok('I9f an unterminated object returns null', extractJsonObject('{"a":1') === null);
+
+// THE SCHEMA IS STILL STRICT. Extraction must not have loosened it.
+ok('I9g a fenced reply with a triage outside the enum still degrades',
+  parseInterpretation('```json\n{"explanation":"e","triage":"safe"}\n```').triage === 'needs_human');
+ok('I9h a fenced reply with no explanation still degrades',
+  parseInterpretation('```json\n{"triage":"looks_real"}\n```').triage === 'needs_human');
+
+// The captured-reply fixtures parse. Constructed ones say so in line one.
+const RAW = path.join(FIX, 'raw-replies');
+for (const f of fs.readdirSync(RAW).filter((n) => n.endsWith('.txt'))) {
+  const body = fs.readFileSync(path.join(RAW, f), 'utf8');
+  const constructed = /^CONSTRUCTED, NOT CAPTURED/.test(body);
+  const r = parseInterpretation(body);
+  ok(`I9i ${f}${constructed ? ' (constructed)' : ' (captured)'} parses`,
+    r.triage !== 'needs_human' || /needs_human/.test(body),
+    `triage=${r.triage}`);
 }
 
 console.log(`\n  interpreter: ${failures} failure(s)\n`);

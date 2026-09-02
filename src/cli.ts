@@ -700,7 +700,14 @@ function printUnifiedReport(
         console.log(`   AI review: NOT AVAILABLE — ${escapeControls(it.skipped)}`);
         console.log(`     ${escapeControls(it.explanation)}`);
       } else {
-        console.log(`   AI review (best effort): ${renderField(TRIAGE_LABEL[it.triage] || it.triage)}`);
+        // NOT renderField. That escaper is for values a tool or a model
+        // supplied; it allows [A-Za-z0-9._-] and turns everything else into
+        // '?', which rendered "needs a human" as "needs?a?human". This label is
+        // a literal chosen from a closed enum in this file, so there is nothing
+        // untrusted to escape. `it.triage` is only reached when the enum check
+        // already passed, and it is escaped, because that is the model's word.
+        const label = TRIAGE_LABEL[it.triage] || renderField(it.triage);
+        console.log(`   AI review (best effort): ${label}`);
         console.log(`     ${escapeControls(it.explanation)}`);
       }
       if (it.suggested_fix) {
