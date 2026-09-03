@@ -7,6 +7,44 @@ git log.
 
 ## Unreleased
 
+**An MCP finding's id now follows the config's content, not its path on disk.**
+The same repository cloned to two directories reported the same finding under
+two different ids — `benborla/mcp-server-mysql` at one commit gave `afc41f6e`
+in one clone and `745b98cf` in another, from a byte-identical `.mcp.json`. The
+prompt surface was given a content key during the Hermes profile work and the
+MCP surface never was, so `fingerprint()` kept hashing whatever absolute path
+discovery happened to produce. An id that moves with the checkout cannot
+baseline or suppress anything, which is what made the false positive documented
+below impossible to park in CI. Both clones now report `1d1c0159`.
+
+Detection is unchanged: same categories, same severities, same evidence, same
+report shape. A source that will not read — a synthetic label from an adapter,
+or a config that vanished between discovery and the scan — falls back to the
+old path-keyed behaviour for that entry rather than throwing or blanking its
+id.
+
+One behaviour change beyond the id itself, worth knowing before it surprises
+someone: findings are deduplicated by id, so two identical configs seen in a
+single scan now collapse into one finding carrying both addresses
+(`occurrences: 2`, `also_in`) instead of being reported twice. That is the
+bargain the prompt surface already made — one problem, every address it has —
+now reaching MCP configs. It does not affect the two-clone case above, which is
+two separate scans.
+
+**This changes the `id` of every existing `unpinned_remote_exec`,
+`secret_in_config`, `unencrypted_transport` and `command_injection_risk`
+finding, for every user, the moment it ships.** Anyone holding a baseline of MCP
+findings by id loses it on upgrade. This is the same one-time cost already
+disclosed and accepted for the evidence widening below, now paid a second time
+for a different reason. It also means two unrelated projects that happen to ship
+an identical minimal config now share an id, so a baseline entry made against
+one will suppress the other.
+
+The code surface (semgrep results, keyed on `tf.file`) is still path-keyed and
+is deliberately untouched here: it predates `surfaces`, nobody has reported it
+as a live problem, and it has no clean whole-file unit the way a small config or
+prompt file does. Filed as a follow-up.
+
 **`prompt_injection` evidence now shows the whole source line.** It previously
 recorded the bare regex match. On a skill teaching eval-writing, the row
 
