@@ -5,7 +5,7 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
-## Unreleased
+## 1.5.2 — 2026-09-03
 
 **`--root` on a path that does not exist now errors instead of reporting a
 clean scan.** It used to print `scanned 0 … nothing to report` and exit 0,
