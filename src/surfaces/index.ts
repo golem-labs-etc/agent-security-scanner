@@ -28,6 +28,19 @@ export { findObfuscation } from './obfuscation';
  * re-alert something a caller has already baselined. Evidence is folded
  * through the same canonicalisation the detectors use, so an attacker cannot
  * defeat a baseline by re-hiding the same directive a different way.
+ *
+ * `filePath` is a content key rather than a location for BOTH file-backed
+ * surfaces now -- prompt files and MCP configs alike are passed
+ * `'content:' + sha256(file)`. A file's identity is its bytes: the same skill
+ * copied into twenty-two profile directories, or the same repo cloned to two
+ * paths, is one finding either way, and an id that moved with the directory
+ * could not be baselined or suppressed. The code surface still keys on its
+ * raw path; semgrep results have no single clean whole-file unit and need
+ * their own survey.
+ *
+ * Note this is also what makes findings dedupe across locations: identical
+ * content in two places collapses to one finding carrying both addresses,
+ * rather than two findings saying the same thing.
  */
 export function fingerprint(
   category: string,
@@ -126,8 +139,36 @@ export async function scanSurfaces(
     }
   }
 
+  // The same, for MCP config sources. A repo cloned to two directories is the
+  // same config and the same finding; keying on the absolute path `walk()`
+  // produced meant it was reported under two ids, and an id that moves with
+  // the checkout cannot baseline or suppress anything.
+  //
+  // Keyed by source and read once: one config file usually declares several
+  // servers, and re-reading it per entry would be the same bytes each time.
+  //
+  // A source that will not read is left unset on purpose, so the fingerprint
+  // below falls back to the raw path for that entry. `entry.source` is not
+  // always a file: an adapter may supply a synthetic label, and
+  // P6_inline_secret.json names a path that does not exist because its secret
+  // is inline in `env` and needs no file read. Degrading to today's behaviour
+  // for one entry is right; throwing, or blanking its id, is not.
+  const mcpContentKey: Record<string, string> = {};
+
+  for (const s of servers) {
+    if (mcpContentKey[s.source] !== undefined) continue;
+    try {
+      mcpContentKey[s.source] = crypto.createHash('sha256')
+        .update(fs.readFileSync(s.source, 'utf8')).digest('hex');
+    } catch (e) {
+      // Synthetic or vanished source: fingerprint falls back to the raw path.
+    }
+  }
+
   const findings: Finding[] = raws.map((r) => {
-    const key = r.surface === 'prompt' ? contentKey[r.path] : undefined;
+    const key = r.surface === 'prompt' ? contentKey[r.path]
+              : r.surface === 'mcp' ? mcpContentKey[r.path]
+              : undefined;
     const f: Finding = {
       // Prompt findings key on content, not path: see `Finding.id`.
       id: fingerprint(r.category, key ? 'content:' + key : r.path, r.line, r.evidence),
