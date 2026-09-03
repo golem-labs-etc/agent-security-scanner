@@ -78,6 +78,59 @@ check('the entry carries the file it came from',
       !!userEntry && userEntry.source === path.join(root, '.claude.json'),
       userEntry ? userEntry.source : '(entry missing)');
 
+// Issue 3: a nonexistent --root must not scan as clean. A path that never
+// existed and an empty tree look identical from the return value alone, and
+// that ambiguity is the whole defect. `walk()`'s per-subdirectory catch is
+// correct and stays -- a directory that becomes unreadable mid-walk should be
+// skipped, not fail the scan. What was wrong is that the same catch also
+// swallowed the top-level root not existing, and nothing checked it first.
+const missingRoot = path.join(root, 'this-path-was-never-created');
+let threwForMissing = false;
+let missingMessage = '';
+try {
+  discoverInventory(missingRoot);
+} catch (e) {
+  threwForMissing = true;
+  missingMessage = e.message;
+}
+check('a nonexistent --root throws rather than scanning as clean',
+      threwForMissing && missingMessage.indexOf(missingRoot) !== -1,
+      threwForMissing ? missingMessage : '(did not throw)');
+
+// A file, not a directory, passed as --root by mistake -- the same swallowed
+// error path, but a different errno underneath (ENOTDIR rather than ENOENT),
+// so it gets its own assertion rather than riding on the one above.
+const aFile = path.join(root, '.claude.json'); // written above, a real file
+let threwForFile = false;
+let fileMessage = '';
+try {
+  discoverInventory(aFile);
+} catch (e) {
+  threwForFile = true;
+  fileMessage = e.message;
+}
+check('--root pointing at a file (not a directory) also throws',
+      threwForFile && fileMessage.indexOf(aFile) !== -1,
+      threwForFile ? fileMessage : '(did not throw)');
+
+// And the same thing through the real binary. The library assertions above
+// cannot see the defect a user actually hits, which is the CLI's exit code
+// disagreeing with its own stdout: `nothing to report`, exit 0. Spawning the
+// built CLI follows tests/pipe.js, the one place in this suite that already
+// runs the binary as a subprocess rather than calling library functions.
+const { spawnSync } = require('child_process');
+const CLI = path.join(__dirname, '..', 'dist', 'cli.js');
+
+const cliMissing = path.join(root, 'also-never-created');
+const res = spawnSync('node', [CLI, 'surfaces', '--root', cliMissing], { encoding: 'utf8' });
+
+check('CLI: --root on a nonexistent path exits non-zero',
+      res.status !== 0,
+      'exit ' + res.status);
+check('CLI: --root on a nonexistent path writes an error to stderr, not "nothing to report"',
+      res.stderr.indexOf(cliMissing) !== -1 && res.stdout.indexOf('nothing to report') === -1,
+      'stderr: ' + res.stderr.trim().slice(0, 200));
+
 console.log('');
 console.log('discovery: ' + pass + '/' + (pass + fail) + ' passed on ' + process.platform);
 if (fail) {
