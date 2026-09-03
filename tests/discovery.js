@@ -131,13 +131,6 @@ check('CLI: --root on a nonexistent path writes an error to stderr, not "nothing
       res.stderr.indexOf(cliMissing) !== -1 && res.stdout.indexOf('nothing to report') === -1,
       'stderr: ' + res.stderr.trim().slice(0, 200));
 
-console.log('');
-console.log('discovery: ' + pass + '/' + (pass + fail) + ' passed on ' + process.platform);
-if (fail) {
-  console.log('failed: ' + failures.join(', '));
-  process.exit(1);
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // DEFAULT SURFACE DISCOVERY
 //
@@ -238,4 +231,20 @@ if (typeof discoverDefaultInventory !== 'function') {
         checked.length > 0 && checked.every(
           (c) => typeof c.path === 'string' && typeof c.found === 'boolean'),
         checked.length + ' location(s) reported');
+}
+
+// The tally is here, at the true end of the file, and nowhere else.
+//
+// It used to sit between the two sections. `pass`/`fail` are shared across the
+// whole file, so that placement had two separate costs. A red first section
+// exited before D0-D5 ran at all. A green first section -- the steady state --
+// let them run, print `FAIL`, and then the script simply ended: node exits 0
+// when a script finishes without throwing, however many checks reported
+// failure. So five checks, including the one this file's own comment calls the
+// only one that matters, were never enforced on any run.
+console.log('');
+console.log('discovery: ' + pass + '/' + (pass + fail) + ' passed on ' + process.platform);
+if (fail) {
+  console.log('failed: ' + failures.join(', '));
+  process.exit(1);
 }
