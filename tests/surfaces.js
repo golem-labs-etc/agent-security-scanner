@@ -409,6 +409,93 @@ function declaredPaths(c) {
   }
 
   console.log('');
+  console.log('IDSTABLE  a finding id must follow the content, not the checkout path');
+  {
+    // The reported bug: benborla/mcp-server-mysql, one commit, two clones, the
+    // identical `.mcp.json` finding reported under two different ids
+    // (1fb9bd29 vs d100959a). An id that moves with the directory cannot
+    // baseline or suppress anything, which is what blocks issue 2's residual.
+    //
+    // The fixtures are named `config.json`, not `.mcp.json`, matching every
+    // other MCP fixture in this directory -- none of them uses a live config
+    // filename. `scanSurfaces` takes a hand-built inventory and never runs
+    // filename discovery, so the name has no bearing on what is exercised.
+    const mcpInv = (dir) => ({
+      schema: 1,
+      mcp_servers: [{
+        source: f(dir + '/config.json'), name: 'example-tool',
+        transport: 'stdio', command: 'npx', args: ['-y', '@example/mcp-server-example'],
+      }],
+      prompt_files: [], code_files: [],
+    });
+    const pick = (r) => r.findings.find((x) => x.category === 'unpinned_remote_exec');
+
+    const [repA, repB, repC] = await Promise.all([
+      scanSurfaces(mcpInv('N18_clone_a'), OPTS),
+      scanSurfaces(mcpInv('N18_clone_b'), OPTS),
+      scanSurfaces(mcpInv('N18_clone_c'), OPTS),
+    ]);
+    const fA = pick(repA), fB = pick(repB), fC = pick(repC);
+
+    // N18a: the bug itself. Same content, two paths, one id.
+    if (fA && fB && fA.id === fB.id) {
+      pass++;
+      console.log('  ok    N18a same config content at two paths -> one id  [' + fA.id + ']');
+    } else {
+      fail++;
+      failures.push('N18a');
+      console.log('  FAIL  N18a same config content at two paths must share an id: ' +
+                  'a=' + (fA ? fA.id : 'MISSING') + ' b=' + (fB ? fB.id : 'MISSING'));
+    }
+
+    // N18b: the control that makes N18a mean something. A fingerprint that
+    // ignored content entirely -- a constant, say -- would satisfy N18a too.
+    // The inventory entry here is byte-identical to A, so category, evidence
+    // and line are all equal; the ONLY difference is the bytes of the file at
+    // `source`. Deliberately synthetic: it isolates the content key as the one
+    // varying input. (Changing `args` instead, as first drafted, would change
+    // the evidence too and prove nothing about the key.)
+    if (fA && fC && fA.id !== fC.id) {
+      pass++;
+      console.log('  ok    N18b different config content -> different id, same inventory');
+    } else {
+      fail++;
+      failures.push('N18b');
+      console.log('  FAIL  N18b different config content must not share an id: ' +
+                  'a=' + (fA ? fA.id : 'MISSING') + ' c=' + (fC ? fC.id : 'MISSING'));
+    }
+
+    // N18c: the consequence the work order did not name. Findings dedupe on
+    // id, so once two identical configs share one, they stop being two
+    // findings and become one carrying both addresses. That is the prompt
+    // surface's existing bargain -- "one problem, every address it has" --
+    // reaching the MCP surface. No existing case can catch it: every other
+    // fixture is scanned alone, so no P/N case ever puts two sources in one
+    // inventory.
+    const both = {
+      schema: 1,
+      mcp_servers: [
+        mcpInv('N18_clone_a').mcp_servers[0],
+        mcpInv('N18_clone_b').mcp_servers[0],
+      ],
+      prompt_files: [], code_files: [],
+    };
+    const repBoth = await scanSurfaces(both, OPTS);
+    const hits = repBoth.findings.filter((x) => x.category === 'unpinned_remote_exec');
+    if (hits.length === 1 && hits[0].occurrences === 2 &&
+        Array.isArray(hits[0].also_in) && hits[0].also_in.length === 1) {
+      pass++;
+      console.log('  ok    N18c two identical configs in one scan -> one finding, occurrences 2');
+    } else {
+      fail++;
+      failures.push('N18c');
+      console.log('  FAIL  N18c expected one finding with occurrences 2, got ' +
+                  hits.length + ' finding(s): ' +
+                  JSON.stringify(hits.map((x) => ({ id: x.id, occ: x.occurrences, also: x.also_in }))));
+    }
+  }
+
+  console.log('');
   console.log('LEAK      default output must quote no fixture content');
   const WIN = 12;
   for (const c of POSITIVE) {
