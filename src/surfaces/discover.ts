@@ -5,6 +5,13 @@
  * comes from a platform adapter, which knows where its host keeps things.
  * Nothing here is host-specific: it looks for the file names every agent
  * platform happens to use, and it does not pretend to know about any of them.
+ *
+ * `discoverInventory` validates `root` before walking it, and throws if it is
+ * missing or is not a directory. It used to just walk, and `walk()`'s catch
+ * turned a typo'd path into an empty inventory: `scanned 0 ... nothing to
+ * report`, exit 0, identical to a clean machine. Absence and "I never looked"
+ * must not render the same, which is the whole reason
+ * `discoverDefaultInventory` reports each location present or absent.
  */
 
 import * as fs from 'fs';
@@ -248,6 +255,25 @@ export function discoverDefaultInventory(
 }
 
 export function discoverInventory(root: string, maxDepth = 6): Inventory {
+  // Check the root itself once, here, rather than loosening what `walk()`
+  // tolerates. `walk()` must keep skipping a subdirectory it cannot read --
+  // a permissions change or a vanishing mount mid-walk is not a reason to
+  // fail the whole scan. The root not existing is.
+  //
+  // Thrown rather than returned: `cli.ts`'s `.action()` already wraps this in
+  // a try/catch that prints `error: <message>` and exits 2, the same path that
+  // handles an unsupported inventory schema. The return type stays `Inventory`
+  // so existing callers keep destructuring the result as they do today.
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(root);
+  } catch (e) {
+    throw new Error(`Root directory does not exist: ${root}`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`Root path exists but is not a directory: ${root}`);
+  }
+
   const files = walk(root, maxDepth);
   const mcp_servers: McpServerEntry[] = [];
   const prompt_files: PromptFileEntry[] = [];
