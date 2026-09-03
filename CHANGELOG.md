@@ -5,6 +5,31 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
+## Unreleased
+
+**`--root` on a path that does not exist now errors instead of reporting a
+clean scan.** It used to print `scanned 0 … nothing to report` and exit 0,
+which is the same thing it prints for a machine with nothing wrong on it. A
+typo in a path, a variable that expanded to nothing, a directory removed
+between one CI step and the next — each of them looked like a pass.
+`discoverInventory` never checked its root, and the `catch` inside `walk()`
+that lets the scan survive one unreadable subdirectory also swallowed the root
+itself being missing. It now fails with `error: Root directory does not exist:
+<path>` and exit code 2. A `--root` pointing at a file rather than a directory
+gets its own message and the same exit code.
+
+The tolerant `catch` inside `walk()` is unchanged: a directory that becomes
+unreadable partway through a scan is still skipped rather than failing the
+whole run. Only the root is checked, once, before the walk begins. The
+no-`--root` path is untouched too — it already reported every location it
+checked as present or absent, which is the same protection arriving late for
+`--root`.
+
+Nothing changes for a `--root` scan that was already valid: same findings, same
+ids, same output shape, same exit codes. Worth saying explicitly, because the
+last two entries below both had to disclose that finding ids would churn on
+upgrade — this one carries no such cost.
+
 ## 1.5.1 — 2026-09-03
 
 **An MCP finding's id now follows the config's content, not its path on disk.**
