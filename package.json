@@ -1,6 +1,6 @@
 {
   "name": "glance-scanner",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Security scanner for AI agents. Static analysis by default (semgrep + npm audit), no API key. Optional AI semantic analysis on your own provider key.",
   "main": "dist/cli.js",
   "bin": {
