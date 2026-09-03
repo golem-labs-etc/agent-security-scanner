@@ -5,7 +5,7 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
-## Unreleased
+## 1.5.1 — 2026-09-03
 
 **An MCP finding's id now follows the config's content, not its path on disk.**
 The same repository cloned to two directories reported the same finding under
