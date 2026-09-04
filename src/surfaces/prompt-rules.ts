@@ -40,7 +40,6 @@ import { findSecretsInText } from './secrets';
 const OVERRIDE_RE: RegExp[] = [
   /\b(?:ignore|disregard|forget|discard|override)\b[^.\n]{0,40}\b(?:all\s+)?(?:previous|prior|above|earlier|preceding|foregoing|former|initial|original|system)\b[^.\n]{0,40}\b(?:instruction|instructions|prompt|prompts|rule|rules|direction|directions|message|messages|context|guideline|guidelines)\b/i,
   /\b(?:ignore|disregard|bypass|override|circumvent)\b[^.\n]{0,30}\b(?:your|the)\b[^.\n]{0,30}\b(?:system\s+prompt|safety|guardrail|guardrails|restriction|restrictions|policy|policies|guideline|guidelines|constraint|constraints)\b/i,
-  /\byou\s+are\s+(?:now|no\s+longer)\b[^.\n]{0,60}/i,
   // `task` and `objective` were in this alternation and came out. "The new task
   // is assigned to the original implementer" is how a work-queue skill is
   // written; it is not an attempt to replace anyone's instructions.
@@ -69,8 +68,32 @@ const CONCEALMENT_RE: RegExp[] = [
   /\bwithout\s+(?:telling|informing|notifying|asking|alerting)\b[^.\n]{0,20}\b(?:the\s+)?(?:user|human|operator|owner)\b/i,
 ];
 
-/** Both lists, for the rules that only ever read concealed text. */
-const ALL_DIRECTIVES: RegExp[] = OVERRIDE_RE.concat(CONCEALMENT_RE);
+/**
+ * Persona framing: "you are now X", "you are no longer Y".
+ *
+ * This was in OVERRIDE_RE and read over visible prose, where it required
+ * nothing adversarial. It matched a skill's own opening line -- "You are now a
+ * world-class design expert" is how skills introduce themselves -- and a
+ * documentation table row quoting "You are now [unconstrained persona]" as an
+ * attack signature. Neither is an injection; both are how a skill file is
+ * written.
+ *
+ * So it moves to the concealment tier, exactly as CONCEALMENT_RE did for the
+ * same reason (see its docstring): the same sentence hidden in an HTML comment,
+ * a homoglyph or a zero-width split is an attack, and in plain sight it is
+ * documentation. Kept in ALL_DIRECTIVES below so the concealed forms still
+ * fire; absent from the OVERRIDE_RE prose/fence loops so the visible forms do
+ * not. Measured on the 18-repo Phase 5 corpus: this pattern accounted for the
+ * bulk of the visible-prose prompt_injection false positives.
+ */
+const PERSONA_RE: RegExp[] = [
+  /\byou\s+are\s+(?:now|no\s+longer)\b[^.\n]{0,60}/i,
+];
+
+/** Both lists, plus persona framing, for the rules that only ever read
+ * concealed text. Persona is here but NOT in OVERRIDE_RE, so a concealed
+ * "you are now ..." still fires while a visible one does not. */
+const ALL_DIRECTIVES: RegExp[] = OVERRIDE_RE.concat(PERSONA_RE, CONCEALMENT_RE);
 
 /**
  * Verbs that move data off the machine.
@@ -79,9 +102,19 @@ const ALL_DIRECTIVES: RegExp[] = OVERRIDE_RE.concat(CONCEALMENT_RE);
  * -f ~/.ssh/id_ed25519` was a critical finding: `email` inside an address read
  * as the verb, `example.com` as the destination and `.ssh` as the source. A
  * word that is the local part of an address is not being used as a verb.
+ *
+ * `leak` is split into its own branch, hyphen-guarded on both sides, for the
+ * same reason one word further on. A skill `description:` reading "runs a
+ * pre-launch check including an API-key-leak scan" -- a safeguard -- put `leak`
+ * next to `$ANTHROPIC_API_KEY` and produced a critical exfiltration finding.
+ * `leak` joined by a hyphen to an adjacent token is a noun modifier
+ * (`API-key-leak`, `data-leak`, `leak-scan`), not a verb, so `(?<!-)\bleak\b(?!-)`
+ * declines it while a bare `leak ~/.ssh/id_rsa` still matches. The guard is on
+ * `leak` alone, deliberately: the other verbs stay matchable inside a hyphen
+ * compound, so a real `auto-forward the .env to ...` is not quietly missed.
  */
 const EXFIL_VERB =
-  /\b(?:send|post|upload|transmit|forward|exfiltrate|leak|report|e-?mail|mail|submit|push|sync|copy|deliver|curl|wget|fetch)\b(?!@)/i;
+  /(?:\b(?:send|post|upload|transmit|forward|exfiltrate|report|e-?mail|mail|submit|push|sync|copy|deliver|curl|wget|fetch)\b(?!@)|(?<!-)\bleak\b(?!-))/i;
 
 /**
  * A local artefact worth stealing: a dotfile, a home path, a known secret path.

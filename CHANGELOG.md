@@ -5,6 +5,43 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
+## Unreleased
+
+**Two false-positive classes closed in security-skill documentation.** A skill's
+own persona line — `You are now a world-class design expert`, the ordinary way a
+skill introduces itself — and a documentation table row quoting `You are now
+[unconstrained persona]` as an attack signature both reported `high
+prompt_injection`. And a `description:` reading `runs a pre-launch check
+including an API-key-leak scan` — a safeguard — reported `critical
+exfiltration_instruction`, because `leak` in the compound noun `API-key-leak`
+was read as an exfiltration verb next to `$ANTHROPIC_API_KEY`.
+
+Persona framing (`you are now …`) moves from the visible-prose list to the
+concealment tier, exactly as the concealment patterns did before it: the same
+sentence hidden in an HTML comment, a homoglyph or a zero-width split still
+fires `hidden_instruction`; in plain sight it no longer fires. `leak` is now
+guarded against hyphenated compounds the way the address guard already handles
+`email`, so `API-key-leak` is inert while a bare `leak ~/.ssh/id_rsa` still
+fires. No pattern was deleted and the guard is on `leak` alone, so a real
+`auto-forward the .env to …` is not missed.
+
+**Counts go down.** Measured across the 18-repo, 11,253-surface Phase 5 corpus
+at fixed commits: `prompt_injection` 38 → 31, `exfiltration_instruction` 1 → 0,
+`fenced_directive` 117 → 112 (persona strings quoted inside a fence no longer
+downgrade-fire either). No surviving finding's `id` changes — suppressed
+findings simply disappear, which is not id churn.
+
+This closes the class #25's issue described but #25 did not fix: #25 widened the
+evidence so a reviewer could *see* a documentation finding was wrong, but the
+finding still fired. This narrows detection for the persona and hyphenated-noun
+cases so it does not fire in the first place.
+
+Not closed, and reported rather than widened into (see #38's follow-up): after
+this change `prompt_injection` on this corpus is still dominated by two further
+documentation classes — `enable … debug mode` matching on ordinary CLI docs, and
+override phrasing quoted as an example — so the category is not yet reliable
+enough to source examples from.
+
 ## 1.5.2 — 2026-09-03
 
 **`--root` on a path that does not exist now errors instead of reporting a
