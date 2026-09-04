@@ -5,6 +5,35 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
+## Unreleased
+
+**`unpinned_remote_exec` no longer treats a dist-tag or a range as a version
+pin — a false negative, now closed.** The check exists to flag an MCP entry that
+fetches and runs whatever is published the moment it starts. It accepted any
+suffix after `@` as a pin, so `npx -y tool@latest`, `tool@next`, `tool@^1.0.0`
+and `tool@*` all read as pinned and were silently passed — and on the uv side a
+bare `@` or any of `= < > ~` did the same, so `uvx tool@latest` and even a range
+like `uvx tool>=1.0` slipped through. `tool@latest` fetches a different artifact
+tomorrow than today, which is exactly the situation the check is for.
+
+A single helper now answers whether a specifier is an *exact* version: for npm,
+a concrete semver after the last `@` (which begins with a digit — a dist-tag
+begins with a letter and a range with an operator); for uv/pip, `==1.2.3` or
+`===`. A git URL or a full commit SHA counts as exact. Everything else is
+reported.
+
+**This is a false negative being closed, not a new check.** Severity stays
+`info` and stays there deliberately: `npx -y` is how most MCP servers ship, and
+a check that turns a status chip red on a clean install gets ignored. The `-y`
+gate on npx and the `deno`/`pip` branches are unchanged.
+
+**Finding counts go UP on real projects, with no change on the user's side.**
+Measured on `MadAppGang/claude-code` at `6097ad4`: `unpinned_remote_exec` went
+1 → 2, the new finding being `chrome-devtools: npx chrome-devtools-mcp@latest`.
+**No existing finding id changes** — reported entries keep their evidence string
+(`name: npx pkg`), so their ids are stable; only new findings appear. Verified
+by scanning two real repos before and after and diffing the ids, not assumed.
+
 ## 1.5.3 — 2026-09-04
 
 **Two false-positive classes closed in security-skill documentation.** A skill's
