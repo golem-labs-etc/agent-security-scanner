@@ -5,7 +5,7 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
-## Unreleased
+## 1.5.4 — 2026-09-04
 
 **`unpinned_remote_exec` no longer treats a dist-tag or a range as a version
 pin — a false negative, now closed.** The check exists to flag an MCP entry that
