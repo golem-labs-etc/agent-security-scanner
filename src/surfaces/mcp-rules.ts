@@ -54,6 +54,49 @@ function isShell(command: string): boolean {
   return SHELLS.indexOf(base.toLowerCase()) !== -1;
 }
 
+/**
+ * Is this specifier an EXACT version, the one case that is a real pin?
+ *
+ * The check exists to flag an entry that fetches and runs whatever is published
+ * at the moment it starts. Only a concrete version escapes that: `tool@latest`
+ * fetches a different artifact tomorrow, and so does a range like `tool@^1.0.0`
+ * or `tool>=1.0`. So a dist-tag, a range and a bare name are all NOT exact.
+ *
+ * `ecosystem` picks the grammar. For npm the version follows `@`, after an
+ * optional `@scope/`; exact means a concrete semver, which begins with a digit
+ * (`1.2.3`, with any prerelease/build tail). A dist-tag begins with a letter,
+ * and every range operator (`^ ~ * x >= <= > < || -`) begins with something
+ * that is not a digit, so "starts with a digit after the last `@`" separates
+ * them cleanly. For uv/pip exact means `==1.2.3` (or `===`); `>= <= ~= > < !=`
+ * and a bare name are not.
+ *
+ * A git URL or a full 40-char commit SHA is a real pin and is treated as exact
+ * for the npm ecosystem: both fetch one immutable artifact. A `git+`-prefixed
+ * URL and a 40-hex `#`-fragment SHA are the shapes seen in practice.
+ */
+function isExactVersion(spec: string, ecosystem: 'npm' | 'uv'): boolean {
+  const s = spec.trim();
+  if (!s) return false;
+
+  if (ecosystem === 'npm') {
+    // An immutable remote source counts as pinned.
+    if (/^git\+/i.test(s) || /#[0-9a-f]{40}$/i.test(s)) return true;
+    // Strip an optional leading `@scope/`, then read the version after the
+    // FIRST remaining `@`. No `@` means no version, which is not a pin.
+    const body = s.replace(/^@[^/]+\//, '');
+    const at = body.indexOf('@');
+    if (at === -1) return false;
+    const version = body.slice(at + 1);
+    // Exact semver starts with a digit. Dist-tags start with a letter; ranges
+    // start with an operator; both fail this.
+    return /^\d/.test(version);
+  }
+
+  // uv / pip: exact is `==1.2.3` or `===1.2.3`. Everything else, including
+  // `>= <= ~= > < !=` and a bare name, is not.
+  return /(?:^|[^=<>!~])===?\d/.test(s) || /^===?\d/.test(s);
+}
+
 /** Package specifiers that fetch-and-run without a pinned version. */
 function unpinnedRemoteExec(command: string, args: string[]): string | null {
   const base = (command || '').split(/[\\/]/).pop() || '';
@@ -64,15 +107,12 @@ function unpinnedRemoteExec(command: string, args: string[]): string | null {
     // First non-flag argument is the package spec.
     const pkg = args.find((a) => !a.startsWith('-'));
     if (!pkg) return null;
-    // A version is pinned when the spec carries `@x` after the package name.
-    // `@scope/name` alone is not a pin.
-    const pinned = /^(@[^/]+\/)?[^@]+@.+/.test(pkg);
-    if (yes && !pinned) return 'npx ' + pkg;
+    if (yes && !isExactVersion(pkg, 'npm')) return 'npx ' + pkg;
     return null;
   }
   if (cmd === 'uvx') {
     const pkg = args.find((a) => !a.startsWith('-'));
-    if (pkg && !/[=<>~]=?|@/.test(pkg)) return 'uvx ' + pkg;
+    if (pkg && !isExactVersion(pkg, 'uv')) return 'uvx ' + pkg;
     return null;
   }
   if (cmd === 'deno') {
