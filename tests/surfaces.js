@@ -152,6 +152,52 @@ const EVIDENCE = [
     } },
 ];
 
+/**
+ * Security-skill documentation must not read as an attack (issue #38).
+ *
+ * A repository that documents prompt-injection signatures, teaches not to
+ * disable a safeguard, or describes a key-handling protection is the audience
+ * most likely to be evaluating this scanner. Today it lights up their own repo
+ * with findings that are all false. Two classes are fixed here; the fence-policy
+ * case is deliberately out of scope (issue #38, section 1d).
+ *
+ * This is a SUPPRESSION change, so the controls are the load-bearing half. Each
+ * FP asserts a category STOPS firing; each CTL asserts a real attack of the
+ * same shape KEEPS firing, so the fix cannot be "turn the rule off". The CTL
+ * categories are what the detector actually emits today, measured before the
+ * change, not what the work order's table guessed: a concealed persona line
+ * fires `hidden_instruction` via the reveal path, not `prompt_injection`.
+ */
+const SECDOC = [
+  // ── must STOP firing after the fix (each currently fires) ──────────────────
+  { id: 'FP1', fixture: 'FP1_persona_prose.md', kind: 'prompt',
+    rule: 'a skill\'s own "You are now ..." persona line is not prompt_injection',
+    check: (r) => !r.findings.some((x) => x.category === 'prompt_injection') },
+  { id: 'FP2', fixture: 'FP2_persona_table.md', kind: 'prompt',
+    rule: 'a table row documenting "You are now [persona]" as a signature is not prompt_injection',
+    check: (r) => !r.findings.some((x) => x.category === 'prompt_injection') },
+  { id: 'FP3', fixture: 'FP3_leak_compound.md', kind: 'prompt',
+    rule: '"API-key-leak" (a hyphenated noun) is not an exfiltration verb',
+    check: (r) => !r.findings.some((x) => x.category === 'exfiltration_instruction') },
+
+  // ── must KEEP firing (the detector still works) ───────────────────────────
+  // Persona-only fixtures, concealed. The only thing that can catch them is
+  // OVERRIDE_RE[2] via ALL_DIRECTIVES, so if the fix removes it from that list
+  // rather than only from the prose path, these go silent and say so.
+  { id: 'CTL1', fixture: 'CTL1_persona_concealed_comment.md', kind: 'prompt',
+    rule: 'concealed persona framing (HTML comment) still fires hidden_instruction',
+    check: (r) => r.findings.some((x) => x.category === 'hidden_instruction') },
+  { id: 'CTL2', fixture: 'CTL2_persona_homoglyph.md', kind: 'prompt',
+    rule: 'concealed persona framing (homoglyph) still fires hidden_instruction',
+    check: (r) => r.findings.some((x) => x.category === 'hidden_instruction') },
+  { id: 'CTL3', fixture: 'CTL3_exfil_sshkey.md', kind: 'prompt',
+    rule: 'a real exfiltration of ~/.ssh/id_rsa still fires',
+    check: (r) => r.findings.some((x) => x.category === 'exfiltration_instruction') },
+  { id: 'CTL4', fixture: 'CTL4_sshkeygen_comment.md', kind: 'prompt',
+    rule: 'ssh-keygen -C "x@example.com" stays silent (the existing (?!@) non-finding)',
+    check: (r) => !r.findings.some((x) => x.category === 'exfiltration_instruction') },
+];
+
 const NEGATIVE = [
   { id: 'N1', fixture: 'N1_typical.json', kind: 'inventory',
     rule: 'no critical, no high',
@@ -388,6 +434,22 @@ function declaredPaths(c) {
       console.log('  FAIL  ' + c.id + '  ' + c.rule + ' violated: ' +
                   r.findings.map((x) => x.severity + '/' + x.category +
                                  (x.line ? ':' + x.line : '')).join(', '));
+    }
+  }
+
+  console.log('');
+  console.log('SECDOC    security-skill docs are not attacks; real attacks still fire');
+  for (const c of SECDOC) {
+    const r = await scanCase(c);
+    if (c.check(r)) {
+      pass++;
+      console.log('  ok    ' + c.id.padEnd(5) + policyOf(c).padEnd(9) + c.rule +
+                  '  (' + (r.findings.map((x) => x.category).join(',') || 'nothing') + ')');
+    } else {
+      fail++;
+      failures.push(c.id);
+      console.log('  FAIL  ' + c.id + '  ' + c.rule + ' violated: ' +
+                  (r.findings.map((x) => x.severity + '/' + x.category).join(', ') || 'nothing'));
     }
   }
 
