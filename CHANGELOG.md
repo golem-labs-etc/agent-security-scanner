@@ -5,7 +5,7 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
-## Unreleased
+## 1.5.3 — 2026-09-04
 
 **Two false-positive classes closed in security-skill documentation.** A skill's
 own persona line — `You are now a world-class design expert`, the ordinary way a
@@ -41,6 +41,11 @@ this change `prompt_injection` on this corpus is still dominated by two further
 documentation classes — `enable … debug mode` matching on ordinary CLI docs, and
 override phrasing quoted as an example — so the category is not yet reliable
 enough to source examples from.
+
+This release also carries a test-only change (the `tests/discovery.js` tally now
+runs at the true end of the file, so its `D1`–`D5` checks are actually enforced).
+It ships in the source tree but not in the published package, and changes nothing
+a user of the scanner can observe.
 
 ## 1.5.2 — 2026-09-03
 
