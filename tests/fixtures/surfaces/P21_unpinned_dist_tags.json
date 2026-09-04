@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "mcp_servers": [
+    { "name": "a", "source": "/tmp/glance-fixture/P21/.mcp.json", "command": "npx", "args": ["-y", "tool-a"], "env": {} },
+    { "name": "b", "source": "/tmp/glance-fixture/P21/.mcp.json", "command": "npx", "args": ["-y", "tool-b@latest"], "env": {} },
+    { "name": "c", "source": "/tmp/glance-fixture/P21/.mcp.json", "command": "npx", "args": ["-y", "tool-c@next"], "env": {} },
+    { "name": "d", "source": "/tmp/glance-fixture/P21/.mcp.json", "command": "npx", "args": ["-y", "tool-d@^1.0.0"], "env": {} },
+    { "name": "e", "source": "/tmp/glance-fixture/P21/.mcp.json", "command": "npx", "args": ["-y", "tool-e@*"], "env": {} },
+    { "name": "f", "source": "/tmp/glance-fixture/P21/.mcp.json", "command": "npx", "args": ["-y", "@scope/tool-f"], "env": {} },
+    { "name": "g", "source": "/tmp/glance-fixture/P21/.mcp.json", "command": "npx", "args": ["-y", "tool-g@1.2.3"], "env": {} },
+    { "name": "h", "source": "/tmp/glance-fixture/P21/.mcp.json", "command": "uvx", "args": ["tool-h@latest"], "env": {} }
+  ],
+  "prompt_files": [],
+  "code_files": []
+}

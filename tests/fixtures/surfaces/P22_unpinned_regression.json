@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "mcp_servers": [
+    { "name": "i", "source": "/tmp/glance-fixture/P22/.mcp.json", "command": "npx", "args": ["-y", "@scope/tool@1.2.3"], "env": {} },
+    { "name": "j", "source": "/tmp/glance-fixture/P22/.mcp.json", "command": "uvx", "args": ["tool==1.2.3"], "env": {} },
+    { "name": "k", "source": "/tmp/glance-fixture/P22/.mcp.json", "command": "uvx", "args": ["tool>=1.0"], "env": {} },
+    { "name": "l", "source": "/tmp/glance-fixture/P22/.mcp.json", "command": "npx", "args": ["tool-l"], "env": {} }
+  ],
+  "prompt_files": [],
+  "code_files": []
+}

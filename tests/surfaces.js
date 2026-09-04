@@ -453,6 +453,66 @@ function declaredPaths(c) {
     }
   }
 
+  // ── PIN: a dist-tag or a range is not a version pin (issue #16) ────────────
+  //
+  // The evidence string, not the count, is the assertion. A count-only check
+  // passes for the wrong reasons; the set says exactly which specifiers fire.
+  // `unpinned_remote_exec` should fire on everything that fetches whatever is
+  // published at start time, and stay silent only on an EXACT version.
+  //
+  // Note on the expected set: it is SEVEN, not six. The issue prose and the
+  // work order both say "six, everything except g", but "everything except g"
+  // across the a-h fixture is a,b,c,d,e,f,h -- seven. The issue's own table
+  // marks seven rows "yes"; the "six" is a miscount. This asserts the set the
+  // table actually specifies.
+  console.log('');
+  console.log('PIN       unpinned_remote_exec: dist-tags and ranges are not pins');
+  {
+    const evidenceOf = async (fixture) => {
+      // evidence:true so the strings are attached; the assertion is on them.
+      const r = await scanSurfaces(jsonInv(fixture), Object.assign({}, OPTS, { evidence: true }));
+      return r.findings
+        .filter((x) => x.category === 'unpinned_remote_exec')
+        .map((x) => x.evidence)
+        .sort();
+    };
+    const setEq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+    // P21: issue #16's fixture verbatim. Seven fire; g (exact) is silent.
+    const p21want = [
+      'a: npx tool-a',
+      'b: npx tool-b@latest',
+      'c: npx tool-c@next',
+      'd: npx tool-d@^1.0.0',
+      'e: npx tool-e@*',
+      'f: npx @scope/tool-f',
+      'h: uvx tool-h@latest',
+    ].sort();
+    const p21got = await evidenceOf('P21_unpinned_dist_tags.json');
+    if (setEq(p21got, p21want)) {
+      pass++;
+      console.log('  ok    P21  issue #16 fixture: 7 fire, g (exact) silent');
+    } else {
+      fail++;
+      failures.push('P21');
+      console.log('  FAIL  P21  expected ' + p21want.length + ' [' + p21want.join(' | ') +
+                  ']\n              got ' + p21got.length + ' [' + p21got.join(' | ') + ']');
+    }
+
+    // P22: the regression rows not in a-h. Only k (a range) fires.
+    const p22want = ['k: uvx tool>=1.0'];
+    const p22got = await evidenceOf('P22_unpinned_regression.json');
+    if (setEq(p22got, p22want)) {
+      pass++;
+      console.log('  ok    P22  scope+exact silent, uvx==exact silent, uvx range fires, npx no -y silent');
+    } else {
+      fail++;
+      failures.push('P22');
+      console.log('  FAIL  P22  expected [' + p22want.join(' | ') +
+                  ']\n              got [' + p22got.join(' | ') + ']');
+    }
+  }
+
   console.log('');
   console.log('EVIDENCE  a finding must carry enough context to adjudicate it');
   for (const c of EVIDENCE) {
