@@ -37,9 +37,20 @@ const PLACEHOLDER_RE = [
  * Value shapes that are credentials on sight. Vendor prefixes first, because
  * they are unambiguous; the generic high-entropy rule is last and is the one
  * that can be wrong.
+ *
+ * Ordering rule (#43): wherever one vendor's prefix is a prefix of another's
+ * match, the specific one must win. The only such pair here is openai (`sk-`)
+ * over anthropic (`sk-ant-`): the openai body `[A-Za-z0-9_-]{20,}` otherwise
+ * swallows `ant-...`, which made every Anthropic key report as openai and left
+ * the anthropic shape dead code. Reordering fixes secretShape (first match
+ * wins) but not findSecretsInText, which collects every shape that matches and
+ * would still emit a duplicate openai finding on a real Anthropic key. So the
+ * openai pattern is anchored with `(?!ant-)` — the fix works in both entry
+ * points and is order-independent. The reachability test is the general guard:
+ * a future shape shadowed into dead code fails the suite.
  */
 const SECRET_SHAPES: Array<{ name: string; re: RegExp; literal?: boolean }> = [
-  { name: 'openai', re: /\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}\b/ },
+  { name: 'openai', re: /\bsk-(?!ant-)(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}\b/ },
   { name: 'anthropic', re: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/ },
   { name: 'github_pat', re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b/ },
   { name: 'github_fine', re: /\bgithub_pat_[A-Za-z0-9_]{50,}\b/ },
@@ -53,6 +64,30 @@ const SECRET_SHAPES: Array<{ name: string; re: RegExp; literal?: boolean }> = [
   { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
   { name: 'private_key', re: /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/, literal: true },
 ];
+
+/** The declared shape names, in list order. Exported so a reachability test can
+ *  assert every shape is matchable — no shape shadowed into dead code (#43). */
+export const SECRET_SHAPE_NAMES: string[] = SECRET_SHAPES.map((s) => s.name);
+
+/**
+ * A trailing `...` or `…` is documentation's way of writing "not a real value"
+ * (#43: `sk-ant-api03-prod-batch-...` in an ASCII tree). The vendor charsets
+ * exclude `.`, so the marker never sits inside a match — it is the value ending
+ * in one (`secretShape`) or the text immediately after a match, across at most
+ * the one separator the token used internally (`findSecretsInText`).
+ */
+const TRUNCATION_TAIL = /(?:\.\.\.|…)$/;
+const TRUNCATION_AFTER = /^[-_]{0,2}(?:\.\.\.|…)/;
+
+/** True when the value itself ends in a truncation marker. */
+function endsInTruncation(value: string): boolean {
+  return TRUNCATION_TAIL.test(value.trim());
+}
+
+/** True when a match at [index, index+len) is immediately truncated. */
+function truncatedAfterMatch(text: string, index: number, len: number): boolean {
+  return TRUNCATION_AFTER.test(text.slice(index + len));
+}
 
 /** True when the value is a pointer to a secret rather than the secret. */
 export function isReference(value: string): boolean {
@@ -87,6 +122,9 @@ function entropy(s: string): number {
 export function secretShape(value: string): string | null {
   const v = (value || '').trim();
   if (!v || isReference(v) || isPlaceholder(v)) return null;
+  // A value truncated with `...`/`…` is an illustrative stand-in, not a leak,
+  // whatever shape its prefix matches (#43).
+  if (endsInTruncation(v)) return null;
 
   for (const s of SECRET_SHAPES) {
     if (s.name === 'private_key') {
@@ -217,8 +255,11 @@ export function findSecretsInText(
       if (s.name === 'private_key') {
         // Gate on the body between the banners, not the banner alone (#42).
         if (!privateKeyBodyIsReal(text.slice(m.index))) return;
-      } else if (!s.literal && isFillerToken(m[0])) {
-        return;
+      } else if (!s.literal) {
+        // A vendor token immediately followed by `...`/`…` is a truncated
+        // illustrative value, not a leak (#43).
+        if (truncatedAfterMatch(text, m.index, m[0].length)) return;
+        if (isFillerToken(m[0])) return;
       }
       out.push({ index: m.index, match: m[0], shape: s.name });
     });

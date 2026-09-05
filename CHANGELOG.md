@@ -27,10 +27,25 @@ characters that is predominantly base64, above an entropy floor -- which admits
 the smallest real key (an Ed25519 PKCS#8 body) in both multiline and
 JSON-escaped `\n` forms and rejects `...`, prose, and a placeholder body.
 
+`credential_leak` also mislabelled every Anthropic key. The `openai` shape
+(`sk-`) was listed before `anthropic` (`sk-ant-`) and its body swallowed
+`ant-...`, so every `sk-ant-` key reported as an `openai` credential and the
+`anthropic` shape was unreachable dead code. The `openai` pattern is now
+anchored to stop before `ant-`, correct in both detection paths; a reachability
+test asserts every declared shape has a matchable witness so this cannot recur.
+The one corpus instance was `sk-ant-api03-prod-batch-...`, a `...`-truncated
+illustration in an ASCII tree -- a trailing `...`/`…` marker now makes a value
+filler, the same documentation shape the `private_key` fix settled. That was
+`credential_leak`'s last remaining corpus finding, so the category now emits
+nothing on the 18-repo corpus, which is correct: there is no real credential in
+it.
+
 No existing finding id changes: on the 18-repo corpus, `credential_leak` went
-4 -> 1 and `secret_in_config` 1 -> 0, every other category unchanged, and no
-surviving finding's id moved. The `sk-ant`-labelled-`openai` finding (#43) is a
-separate issue and is deliberately left as is.
+4 -> 1 -> 0 and `secret_in_config` 1 -> 0 across these three fixes, every other
+category unchanged, and no surviving finding's id moved. A separate, pre-existing
+false negative was found while measuring and filed but not fixed here: the
+generic high-entropy rule structurally misses hex-charset secrets at 64
+characters (#48).
 
 ## 1.5.4 — 2026-09-04
 
