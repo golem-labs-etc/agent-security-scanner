@@ -5,11 +5,12 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
-## Unreleased
+## 1.5.5 — 2026-09-05
 
-**Two placeholder-gate false positives closed: `secret_in_config` and
-`credential_leak`.** Both removed critical findings that fired on documentation,
-so finding counts go DOWN on affected projects with no change on the user's side.
+**Three false positives closed across `secret_in_config` and `credential_leak`
+(#37, #42, #43).** All three removed critical findings that fired on
+documentation, so finding counts go DOWN on affected projects with no change on
+the user's side.
 
 `secret_in_config`'s generic high-entropy rule accepted
 `ghp_FAKE_TOKEN_FOR_TESTING_ONLY_00000000` (3.759 bits, above the old flat 3.6
