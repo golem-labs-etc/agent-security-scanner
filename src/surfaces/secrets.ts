@@ -54,6 +54,10 @@ const SECRET_SHAPES: Array<{ name: string; re: RegExp; literal?: boolean }> = [
   { name: 'private_key', re: /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/, literal: true },
 ];
 
+/** The declared shape names, in list order. Exported so a reachability test can
+ *  assert every shape is matchable — no shape shadowed into dead code (#43). */
+export const SECRET_SHAPE_NAMES: string[] = SECRET_SHAPES.map((s) => s.name);
+
 /** True when the value is a pointer to a secret rather than the secret. */
 export function isReference(value: string): boolean {
   const v = value.trim();
