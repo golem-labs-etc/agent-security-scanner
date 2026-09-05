@@ -5,6 +5,33 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
+## Unreleased
+
+**Two placeholder-gate false positives closed: `secret_in_config` and
+`credential_leak`.** Both removed critical findings that fired on documentation,
+so finding counts go DOWN on affected projects with no change on the user's side.
+
+`secret_in_config`'s generic high-entropy rule accepted
+`ghp_FAKE_TOKEN_FOR_TESTING_ONLY_00000000` (3.759 bits, above the old flat 3.6
+floor). The floor is now length-normalized (`entropy >= 0.72 * log2(len)`,
+because entropy is capped by `log2(len)` and a flat bits floor punishes short
+tokens), set by measuring a real 366-file MCP-config corpus and synthetic
+real-shaped tokens at every accepted length; a second, independent gate rejects
+a placeholder word (`fake`, `testing`, ...) in the token, which is what catches
+this FP with margin. The run detector was not weakened.
+
+`credential_leak`'s `private_key` shape fired on any `-----BEGIN ... PRIVATE
+KEY-----` banner, so documentation about keys read as a leak. It now turns on
+the body between the banners -- a matching END, a base64 run of at least 40
+characters that is predominantly base64, above an entropy floor -- which admits
+the smallest real key (an Ed25519 PKCS#8 body) in both multiline and
+JSON-escaped `\n` forms and rejects `...`, prose, and a placeholder body.
+
+No existing finding id changes: on the 18-repo corpus, `credential_leak` went
+4 -> 1 and `secret_in_config` 1 -> 0, every other category unchanged, and no
+surviving finding's id moved. The `sk-ant`-labelled-`openai` finding (#43) is a
+separate issue and is deliberately left as is.
+
 ## 1.5.4 — 2026-09-04
 
 **`unpinned_remote_exec` no longer treats a dist-tag or a range as a version
