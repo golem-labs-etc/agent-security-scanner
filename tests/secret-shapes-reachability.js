@@ -105,6 +105,14 @@ for (const name of ['openai', 'anthropic', 'stripe', 'github_pat']) {
   ok(`${name} full-length key fires as ${name} in free text`,
     hits.some(h => h.shape === name), JSON.stringify(hits));
 }
+{
+  // A real Anthropic key must not ALSO surface as an openai finding: openai is
+  // anchored, so it is the correct, single label (no shadow duplicate).
+  const hits = findSecretsInText('token = ' + WITNESS.anthropic());
+  ok('an anthropic key does not also emit an openai finding',
+    hits.some(h => h.shape === 'anthropic') && !hits.some(h => h.shape === 'openai'),
+    JSON.stringify(hits));
+}
 
 console.log(`\n  secret-shapes-reachability: ${pass}/${pass + fail} passed`);
 if (fail) { console.log('  failed: ' + failures.join(', ')); process.exit(1); }
