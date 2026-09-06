@@ -198,7 +198,7 @@ glance-scanner surfaces --inventory inventory.json --json
 
 It reports four things about MCP entries — plain-HTTP transport to a
 non-loopback host, a literal secret held inline in a config, shell
-metacharacters that would actually be interpreted, and, at `info`, an unpinned
+metacharacters that would actually be interpreted, and, at `medium`, an unpinned
 `npx -y`-style fetch-and-run — and four about prompt files: instruction-override
 phrasing, text hidden from a human reader but not from the parser, an
 instruction to send local data to a network destination, and a literal

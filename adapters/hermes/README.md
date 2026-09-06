@@ -153,7 +153,7 @@ other text.
 
 `fenced_directive` is medium, so it correctly never reaches the agent feed,
 which is filtered to critical and high. The same is true of
-`unpinned_remote_exec`, which is info.
+`unpinned_remote_exec`, which is medium.
 
 ## What the agent is told
 

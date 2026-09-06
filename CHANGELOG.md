@@ -7,6 +7,43 @@ git log.
 
 ## Unreleased
 
+**`unpinned_remote_exec` is now `medium`, not `info` (BL-3).** Severity answers
+what happens if the reader ignores a finding. Ignoring a floating MCP server
+means the agent fetches and executes whatever the registry serves next, in the
+agent's process, with the agent's privileges, on every session start. That is a
+live supply-chain execution path.
+
+At `info` it sorted to the bottom. On a real repository (`affaan-m/ECC` @
+`e04ea0b9`) the single true positive in twelve findings sat below eleven false
+ones, and under `strict` below three false criticals. It now sorts at the top of
+that report.
+
+**Only floating specifiers are affected. An exact pin still produces no finding
+at all**, exactly as 1.5.4 made it — nothing new fires on a project that pinned
+its servers properly.
+
+**Counts are unchanged and no finding id moves.** Severity is not part of a
+finding's fingerprint; the ids on the `#16` a–h fixture and on ECC's `.mcp.json`
+(`[0d1219fa]`) are byte-identical before and after. **Exit codes are unchanged
+too**: `info` and `medium` both exit 0, so no CI gate on `$?` changes colour.
+What changes is the order inside the report.
+
+This reverses the severity rationale stated in 1.5.4, which kept the check at
+`info` because "`npx -y` is how most MCP servers ship, and a check that turns a
+status chip red on a clean install gets ignored". That reasoning is why this is
+`medium` and not `high`: medium does not change the exit code, so nobody's build
+turns red for shipping the way the ecosystem ships.
+
+**Owed at the next release:** the `/examples` capability page carries a live
+`unpinned_remote_exec` card (`[555a7a14]`) captured at `info`. Its severity
+changes, so the card needs re-capture at release step 9. The finding id does not
+change.
+
+A neighbour sweep of all ten categories' severities was run and reported; one
+candidate inversion was filed and not fixed here (#55). No other category's
+severity changes in this release.
+
+
 **Security content is no longer scored as the threat it describes (#51).** A
 skill that states an injection defence and quotes the attack it forbids, and a
 detector that ships its own pattern list, got this scanner's worst report. On

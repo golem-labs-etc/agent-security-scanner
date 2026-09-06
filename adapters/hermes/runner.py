@@ -34,7 +34,9 @@ from .discover import build_inventory, hermes_home, inventory_digest, real
 SCAN_POLICY = "strict"
 
 # Severities the agent is ever told about. `fenced_directive` is medium and so
-# is correctly never in this set; `unpinned_remote_exec` is info and likewise.
+# is correctly never in this set; `unpinned_remote_exec` became medium in BL-3
+# and is likewise still excluded, so that re-grade did not change what reaches
+# the agent.
 AGENT_SEVERITIES = ("critical", "high")
 
 SCANNER_BIN = os.environ.get("GLANCE_SCANNER_BIN", "glance-scanner")

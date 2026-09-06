@@ -44,7 +44,7 @@ detection.
 | `unencrypted_transport` | high | a plain `http://` URL whose host is not loopback |
 | `secret_in_config` | critical | an env value that is a literal secret rather than a reference |
 | `command_injection_risk` | high | shell metacharacters that would actually be interpreted |
-| `unpinned_remote_exec` | info | `npx -y`, `uvx`, `deno run`, `pip run` fetching an unpinned package |
+| `unpinned_remote_exec` | medium | `npx -y`, `uvx`, `deno run`, `pip run` fetching an unpinned package |
 
 Loopback means `localhost`, `127.0.0.0/8`, `::1`, `0.0.0.0` and `*.local`,
 matched against the parsed hostname and never against a substring of the URL —
@@ -55,10 +55,21 @@ argument, because arguments handed to `execve` are not shell-interpreted. It
 fires when the command is itself a shell, when the metacharacter is in the
 command, or when an argument carries a substitution some wrapper will expand.
 
-**`unpinned_remote_exec` is `info`, and stays `info`.** `npx -y` is how very
-nearly every MCP server in the ecosystem ships. Raising it turns the status
-chip red on a clean machine, and a tool that is red on install is a tool people
-learn to ignore.
+**`unpinned_remote_exec` is `medium`, and only for a FLOATING specifier.** It
+was `info` until BL-3, on the reasoning that `npx -y` is how very nearly every
+MCP server in the ecosystem ships, so raising it turns the status chip red on a
+clean machine and a tool that is red on install is a tool people learn to
+ignore.
+
+That reasoning survives, and it is why this is `medium` rather than `high`:
+`medium` does not change the exit code (info and medium both exit 0), so no CI
+gate turns red. What changed is the sort order. At `info` the check sorted below
+everything, and on a real repository the single true positive in twelve findings
+sat below eleven false ones. Ignoring a floating server means the agent executes
+whatever the registry serves next, in its own process, on every session start.
+
+An EXACT pin still produces no finding at all, unchanged since 1.5.4: nothing
+fires on a project that pinned its servers.
 
 ## Rules: prompt files
 
@@ -177,9 +188,10 @@ policy:
 | `hidden_instruction` by HTML comment or CSS | `fenced_directive`, medium | `hidden_instruction`, critical |
 | `obfuscated_text` | `obfuscated_text`, high | `obfuscated_text`, high |
 
-Medium, not info. Info is where `unpinned_remote_exec` lives, and that is
-genuinely benign. A directive in a fence is not benign, it is unproven, and the
-severity should say so.
+Medium, not info. A directive in a fence is not benign, it is unproven, and the
+severity should say so. (`unpinned_remote_exec` was the example of a genuinely
+benign `info` when this was written; BL-3 moved it to medium, so the two now sit
+at the same level for different reasons.)
 
 **Why one `hidden_instruction` row follows the fence and the other does not.**
 The category covers two kinds of concealment, and a fence defeats only one of
