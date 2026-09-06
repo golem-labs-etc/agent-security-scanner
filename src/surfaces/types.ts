@@ -134,7 +134,28 @@ export interface Finding {
    * payload.
    */
   evidence?: string;
+  /**
+   * Why this finding was downgraded, when it was.
+   *
+   * Set only where `quotedVerdict` downgrades a directive that is quoted rather
+   * than addressed to the agent (#51). It is the machine-readable form of the
+   * class; the human-readable prefix on the rendered evidence line is display
+   * only.
+   *
+   * Deliberately NOT part of the fingerprint. The id is computed from the raw
+   * evidence, before any marker, so downgrading a finding does not change its
+   * id and a baseline recorded before this existed still matches.
+   */
+  context?: FindingContext;
 }
+
+/**
+ * The reason a quoted directive was downgraded.
+ *
+ * `quoted_negation` — the match's line or parent bullet forbids what it quotes.
+ * `pattern_list`    — the match sits inside a list literal of detection patterns.
+ */
+export type FindingContext = 'quoted_negation' | 'pattern_list';
 
 /** Something the caller needs to know that is not a finding about the target. */
 export interface Warning {

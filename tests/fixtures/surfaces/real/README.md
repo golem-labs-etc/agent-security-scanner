@@ -32,3 +32,46 @@ Nous Research. Individual authorship as declared in each file's frontmatter:
 
 They are unmodified. The `.SKILL.md` suffix keeps the original name visible
 while letting the three sit in one directory.
+
+# Eight real files from ECC, verbatim — the quoted-directive class
+
+`ECC1`–`ECC8` are the security-content false positives of issue #51: files that
+state a defence and quote the attack they forbid, plus a detector's own
+`INJECTION_PATTERNS` list in English and in its zh-CN translation. On 1.5.5 the
+eight produced six HIGH `prompt_injection` and two MEDIUM `fenced_directive` —
+a project that writes injection defences got the scanner's worst report.
+
+They assert **nothing above info, under `balanced` only**. Both halves matter:
+
+- Not "no `prompt_injection` finding". The fix downgrades the severity and keeps
+  the category, because a prohibition wrapping a payload is attacker-controllable
+  text and must stay visible. A category-absence check would pass only if the
+  finding had been suppressed, which is the one outcome this class may not have.
+  The finding also keeps its id: the class travels in `context`, not in the
+  fingerprinted evidence.
+- Not under `strict`. Under `strict` these files still report HIGH, by design.
+
+The three remaining ECC false positives (a DuckDNS `curl` and a Mailtrap
+endpoint, firing `exfiltration_instruction`) are deliberately absent: different
+rule, tracked in #52, not fixed here.
+
+## Provenance and licence
+
+All eight are from `affaan-m/ECC` (<https://github.com/affaan-m/ECC>), MIT
+License, Copyright (c) 2026 Affaan Mustafa, taken verbatim at commit
+`e04ea0b9cc8248686edf5ac751cadff550e162b8`:
+
+| Fixture | Path in ECC |
+|---|---|
+| `ECC1` | `skills/deep-research/SKILL.md` |
+| `ECC2` | `skills/github-ops/SKILL.md` |
+| `ECC3` | `skills/jira-integration/SKILL.md` |
+| `ECC4` | `skills/lead-intelligence/SKILL.md` |
+| `ECC5` | `skills/tdd-workflow/SKILL.md` |
+| `ECC6` | `skills/x-api/SKILL.md` |
+| `ECC7` | `skills/llm-trading-agent-security/SKILL.md` |
+| `ECC8` | `docs/zh-CN/skills/llm-trading-agent-security/SKILL.md` |
+
+`ECC5` earns its place twice over: its prohibition sits past the 200-character
+evidence cap, so a check reading the evidence string rather than the full line
+misses it.

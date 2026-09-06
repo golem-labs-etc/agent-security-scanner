@@ -42,3 +42,6 @@ NET-FACTORY-SPEC.md
 # Python bytecode from the adapters
 __pycache__/
 *.pyc
+
+# External regression corpus checkout (tools/external-corpus.js)
+.corpus-cache/

@@ -180,6 +180,9 @@ export async function scanSurfaces(
     if (r.line !== undefined) f.line = r.line;
     if (r.endLine !== undefined && r.endLine !== r.line) f.end_line = r.endLine;
     if (opts.evidence) f.evidence = r.evidence;
+    // Carried past the fingerprint above on purpose: `context` describes why a
+    // finding was downgraded and must not change its id (#51).
+    if (r.context) f.context = r.context;
     return f;
   });
 

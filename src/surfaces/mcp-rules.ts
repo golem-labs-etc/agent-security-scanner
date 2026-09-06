@@ -8,7 +8,7 @@
  * an ignored tool catches nothing.
  */
 
-import { McpServerEntry, Finding, Category, Severity } from './types';
+import { McpServerEntry, Finding, Category, Severity, FindingContext } from './types';
 import { secretShape } from './secrets';
 
 export interface RawFinding {
@@ -19,7 +19,13 @@ export interface RawFinding {
   line?: number;
   /** Last line of the match, when a rule's window is wider than one line. */
   endLine?: number;
+  /**
+   * The matched text, RAW. Never carries a display marker: this is the string
+   * the fingerprint is computed from, so anything added here changes ids.
+   */
   evidence: string;
+  /** Why this was downgraded, when it was. Not fingerprinted. See `Finding`. */
+  context?: FindingContext;
 }
 
 /**

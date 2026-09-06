@@ -199,6 +199,18 @@ function printCheckedLocations(
 }
 
 /** Human-readable surface report. Evidence appears only when asked for. */
+/**
+ * Human-readable labels for `Finding.context`.
+ *
+ * Display only. The machine-readable value is `context` in `--json`; this is
+ * never written into `evidence`, because evidence is fingerprinted and a marker
+ * there would rename every downgraded finding (#51).
+ */
+const QUOTED_CONTEXT_LABEL: Record<string, string> = {
+  quoted_negation: 'quoted directive (prohibited in surrounding text)',
+  pattern_list: 'quoted directive (inside a pattern list)',
+};
+
 function printSurfaceReport(report: any, withEvidence: boolean, header = true): void {
   const c = report.counts;
   if (header) console.log(`${MARK} agent surfaces`);
@@ -221,7 +233,16 @@ function printSurfaceReport(report: any, withEvidence: boolean, header = true): 
     // and severity/category/id are whitelisted because they are ours.
     const loc = renderPath(f.path, f.line);
     console.log(`  ${renderField(f.severity).padEnd(8)} ${renderField(f.category).padEnd(24)} ${loc}  [${renderField(f.id, 16)}]`);
-    if (withEvidence && f.evidence) console.log(`           ${renderEvidence(f.evidence)}`);
+    // The quoted-directive marker is added HERE, at render, and nowhere else.
+    // It is display only: the id is fingerprinted over the raw evidence, and
+    // `context` carries the class for anything reading the JSON (#51).
+    // The label sits OUTSIDE the escaped evidence, not spliced into it: the
+    // marker is ours (whitelisted, like severity and category), the matched text
+    // is the scanned tree's and goes through renderEvidence untouched.
+    if (withEvidence && f.evidence) {
+      const marker = QUOTED_CONTEXT_LABEL[f.context as string];
+      console.log(`           ${marker ? marker + ': ' : ''}${renderEvidence(f.evidence)}`);
+    }
   }
   if (!withEvidence) {
     console.log();
