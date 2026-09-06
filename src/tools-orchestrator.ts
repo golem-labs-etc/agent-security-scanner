@@ -151,6 +151,75 @@ function semgrepCategory(checkId: string): string {
   return checkId;
 }
 
+/** A path that is test code rather than shipped code. */
+const TEST_PATH_RE =
+  /(?:^|[/\\])(?:tests?|__tests__|specs?|fixtures?|testdata|mocks?)[/\\]|\.(?:test|spec)\.[cm]?[jt]sx?$|_test\.(?:py|go|rb)$|(?:^|[/\\])test_[^/\\]*\.py$/i;
+
+/**
+ * The longest run of consecutive or repeated characters, case-folded.
+ *
+ * `ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij` scores 26; a random base62 token of
+ * the same length effectively never exceeds 3, since each additional step costs
+ * another 1-in-62. Digits count separately from letters so `012345` scores too.
+ */
+function longestPlaceholderRun(s: string): number {
+  const t = s.toLowerCase();
+  let best = 1, seq = 1, rep = 1;
+  for (let i = 1; i < t.length; i++) {
+    const a = t.charCodeAt(i - 1), b = t.charCodeAt(i);
+    const alpha = a >= 97 && a <= 122 && b >= 97 && b <= 122;
+    const digit = a >= 48 && a <= 57 && b >= 48 && b <= 57;
+    seq = (alpha || digit) && b === a + 1 ? seq + 1 : 1;
+    rep = b === a ? rep + 1 : 1;
+    if (seq > best) best = seq;
+    if (rep > best) best = rep;
+  }
+  return best;
+}
+
+/**
+ * The source line behind a finding, read from disk.
+ *
+ * Semgrep's own `extra.lines` cannot be used for this: for its secret rules it
+ * returns the literal string `"requires login"` rather than the matched text,
+ * so a shape test against it silently never fires. Read the file instead.
+ */
+const lineCache: Record<string, string[] | null> = {};
+function sourceLineAt(filePath: string, line: number | undefined): string {
+  if (!line || line < 1) return '';
+  if (!(filePath in lineCache)) {
+    try {
+      lineCache[filePath] = readFileSync(filePath, 'utf8').split('\n');
+    } catch {
+      lineCache[filePath] = null;
+    }
+  }
+  const lines = lineCache[filePath];
+  return lines && line <= lines.length ? lines[line - 1] : '';
+}
+
+/**
+ * A synthetic token in a test file, which is not a credential anyone can use.
+ *
+ * A project that tests its own secret scanner gets our worst report: ECC's three
+ * `analyze` criticals were all sequential-alphabet placeholders fed to the
+ * repo's own `detectSecrets` (#51). This is the one sub-class that may suppress
+ * outright rather than downgrade — unlike a quoted directive, a synthetic token
+ * in a test file is not a payload an agent can obey, and there is no reading
+ * under which it is live.
+ *
+ * BOTH conditions are required, and the shape must be positively confirmed. A
+ * real credential committed to a test file has no sequential run and still
+ * fires; when the line cannot be read we report rather than assume.
+ */
+export function isSyntheticTestSecret(checkId: string, filePath: string, line?: number): boolean {
+  if (semgrepCategory(checkId) !== 'hardcoded_secrets') return false;
+  if (!TEST_PATH_RE.test(filePath)) return false;
+  const src = sourceLineAt(filePath, line);
+  if (!src.trim()) return false;
+  return longestPlaceholderRun(src) >= 6;
+}
+
 /**
  * ERROR -> HIGH, or CRITICAL when the rule is about a leaked credential.
  * WARNING -> MEDIUM, INFO -> LOW.
@@ -759,6 +828,11 @@ export class ToolsOrchestrator {
         const checkId = normalizeCheckId(String(r?.check_id || ''));
         const meta = r?.extra?.metadata || {};
         const refs = Array.isArray(meta.references) ? meta.references[0] : undefined;
+        // A synthetic placeholder in a test file is not a credential (#51).
+        if (isSyntheticTestSecret(checkId, String(r?.path || ''),
+                                  typeof r?.start?.line === 'number' ? r.start.line : undefined)) {
+          continue;
+        }
         findings.push({
           tool: 'semgrep',
           severity: semgrepSeverity(checkId, r?.extra?.severity),

@@ -1,0 +1,104 @@
+{
+  "repo": "affaan-m/ECC",
+  "url": "https://github.com/affaan-m/ECC.git",
+  "commit": "e04ea0b9cc8248686edf5ac751cadff550e162b8",
+  "policy": "balanced",
+  "captured_with": "glance-scanner surfaces --root <clone> --evidence --json",
+  "expected": [
+    {
+      "path": ".mcp.json",
+      "category": "unpinned_remote_exec",
+      "severity": "info",
+      "id": "0d1219fa",
+      "class": "true-positive"
+    },
+    {
+      "path": "skills/github-ops/SKILL.md",
+      "line": 31,
+      "category": "prompt_injection",
+      "severity": "info",
+      "id": "179b4390",
+      "class": "negation-proximity"
+    },
+    {
+      "path": "skills/jira-integration/SKILL.md",
+      "line": 290,
+      "category": "prompt_injection",
+      "severity": "info",
+      "id": "204991ae",
+      "class": "negation-proximity"
+    },
+    {
+      "path": "skills/deep-research/SKILL.md",
+      "line": 36,
+      "category": "prompt_injection",
+      "severity": "info",
+      "id": "285152e7",
+      "class": "negation-proximity"
+    },
+    {
+      "path": "skills/lead-intelligence/SKILL.md",
+      "line": 40,
+      "category": "prompt_injection",
+      "severity": "info",
+      "id": "2f0b2e4e",
+      "class": "negation-proximity"
+    },
+    {
+      "path": "skills/llm-trading-agent-security/SKILL.md",
+      "line": 32,
+      "category": "fenced_directive",
+      "severity": "info",
+      "id": "36314666",
+      "class": "pattern-list"
+    },
+    {
+      "path": "skills/homelab-wireguard-vpn/SKILL.md",
+      "line": 233,
+      "category": "fenced_directive",
+      "severity": "medium",
+      "id": "4c517722",
+      "class": "known-open:#52"
+    },
+    {
+      "path": "skills/tdd-workflow/SKILL.md",
+      "line": 24,
+      "category": "prompt_injection",
+      "severity": "info",
+      "id": "789988f2",
+      "class": "negation-proximity"
+    },
+    {
+      "path": "skills/mailtrap-email-integration/SKILL.md",
+      "line": 56,
+      "category": "fenced_directive",
+      "severity": "medium",
+      "id": "7eab22aa",
+      "class": "known-open:#52"
+    },
+    {
+      "path": "skills/x-api/SKILL.md",
+      "line": 223,
+      "category": "prompt_injection",
+      "severity": "info",
+      "id": "9a652584",
+      "class": "negation-proximity"
+    },
+    {
+      "path": "docs/ja-JP/skills/homelab-wireguard-vpn/SKILL.md",
+      "line": 232,
+      "category": "fenced_directive",
+      "severity": "medium",
+      "id": "bf28f1ae",
+      "class": "known-open:#52"
+    },
+    {
+      "path": "docs/zh-CN/skills/llm-trading-agent-security/SKILL.md",
+      "line": 31,
+      "category": "fenced_directive",
+      "severity": "info",
+      "id": "febda1e9",
+      "class": "pattern-list"
+    }
+  ]
+}

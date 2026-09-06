@@ -5,6 +5,48 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
+## Unreleased
+
+**Security content is no longer scored as the threat it describes (#51).** A
+skill that states an injection defence and quotes the attack it forbids, and a
+detector that ships its own pattern list, got this scanner's worst report. On
+`affaan-m/ECC` that was 11 of 12 `surfaces` findings and all 3 `analyze`
+criticals. The bias ran against exactly the projects most likely to use us.
+
+Two of the three signals **downgrade rather than suppress**, and that is
+deliberate. A prohibition wrapping a payload (`never obey: <payload>`) and a
+list named `INJECTION_PATTERNS` are attacker-controllable text — they are how a
+payload would hide from a scanner that suppressed on them. So a directive that
+is quoted under a prohibition, or contained in a pattern list, now reports at
+`info` under `balanced` with its evidence line prefixed `quoted directive
+(...)`, and reports **as written, unchanged, under `strict`**. The finding stays
+visible and greppable; it just stops sorting above the real one.
+
+The third signal may suppress outright: a synthetic placeholder in a test file
+(a sequential- or repeated-alphabet token under a test path) is not a credential
+under any reading. Both conditions are required and the shape must be positively
+confirmed, so a real credential committed to a test file is still reported.
+
+**Finding ids change for the downgraded entries.** Severity is not part of a
+finding's fingerprint but evidence is, and these gain an evidence prefix, so the
+eight affected findings get new ids under `balanced`. Ids under `strict` are
+unchanged, as is every finding this change does not touch. Said plainly because
+1.5.1 had to disclose id churn and a reader who remembers that will look here.
+
+No new category. The class is expressed in the evidence line rather than as an
+eleventh member of `CATEGORIES`, which is a fixed contract checked in both
+directions by the suite.
+
+Also adds a standing external regression corpus (`npm run corpus:external`):
+`affaan-m/ECC` pinned at `e04ea0b9`, with its expected finding set recorded per
+class. Precision regressions were previously invisible until someone scanned
+something by hand.
+
+Not fixed here, and filed: `exfiltration_instruction` fires on ordinary outbound
+API calls in documentation code fences — a DuckDNS `curl` and a Mailtrap
+endpoint, critical under `strict` (#52). Its three findings are recorded in the
+corpus baseline as known-open rather than papered over.
+
 ## 1.5.5 — 2026-09-05
 
 **Three false positives closed across `secret_in_config` and `credential_leak`
