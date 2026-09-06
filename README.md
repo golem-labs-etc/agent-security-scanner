@@ -29,6 +29,13 @@ npx glance-scanner analyze --path .        # a directory, recursively
 npx glance-scanner analyze --file app.js   # one file
 ```
 
+Code is only half of it. To scan what an agent *reads* — MCP server configs and
+skill files:
+
+```bash
+npx glance-scanner surfaces --root .       # MCP configs and prompt files
+```
+
 ## What you get without a key
 
 Two real static engines, no API key, no account:
@@ -131,6 +138,11 @@ Measured, not assumed:
 - Neither engine reasons about intent. A parameterised query that merely looks
   like concatenation, or a test fixture that looks like a leaked key, will still
   be reported. `--ai --filter-fp` is the pass that drops those.
+- **`obfuscated_text` fires on legitimate mixed-script identifiers.** A
+  non-English codebase that writes a Cyrillic or Greek word next to Latin
+  characters is reported as a homoglyph attack. This is a false positive, not
+  intended behaviour, and it is open as
+  [#41](https://github.com/golem-labs-etc/agent-security-scanner/issues/41).
 
 We have not measured a false-positive rate against a public benchmark, so this
 README does not quote one.
@@ -192,6 +204,35 @@ phrasing, text hidden from a human reader but not from the parser, an
 instruction to send local data to a network destination, and a literal
 credential.
 
+The ten category names, as `surfaces --list-categories` prints them:
+
+```
+unencrypted_transport     secret_in_config          command_injection_risk
+unpinned_remote_exec      prompt_injection          hidden_instruction
+exfiltration_instruction  credential_leak           fenced_directive
+obfuscated_text
+```
+
+Build your map from `--list-categories` rather than from this list, which is a
+copy and can drift.
+
+`--root` walks a directory and reads thirteen filenames — six MCP configs and
+seven prompt files:
+
+| MCP configs | Prompt files |
+| --- | --- |
+| `.mcp.json` | `SKILL.md` |
+| `mcp.json` | `AGENTS.md` |
+| `mcp_servers.json` | `CLAUDE.md` |
+| `claude_desktop_config.json` | `GEMINI.md` |
+| `settings.json` | `SYSTEM.md` |
+| `.claude.json` | `PROMPT.md` |
+| | `INSTRUCTIONS.md` |
+
+`.claude.json` is Claude Code's user-scope MCP config and lives at
+`$HOME/.claude.json`, a sibling of `~/.claude/` rather than inside it, so a scan
+of `~/.claude` alone does not reach it.
+
 Findings carry **no matched text by default**. Pass `--evidence` to see it. The
 default is set in the engine rather than left to the caller because the caller
 is sometimes an LLM prompt, and quoting an injection payload into an agent's
@@ -208,7 +249,8 @@ A ninth and tenth check, `fenced_directive` and `obfuscated_text`, round out ten
 categories. `obfuscated_text` needs no phrase list: it fires on a zero-width
 character between two ASCII letters, a Cyrillic or Greek letter inside an
 otherwise Latin word, or a bidirectional control (Trojan Source,
-CVE-2021-42574).
+CVE-2021-42574). The mixed-script rule is currently too broad — see Known gaps
+below and [#41](https://github.com/golem-labs-etc/agent-security-scanner/issues/41).
 
 Configuration is never read from the tree being scanned, and there is no `off`
 level.
@@ -243,31 +285,80 @@ does.
 
 ## Every flag
 
+One table per subcommand, taken from `--help` on the published binary. Measured
+against **1.5.5**.
+
+### `surfaces`
+
+| Flag | What it does |
+| --- | --- |
+| `--inventory <path>` | inventory JSON produced by a platform adapter |
+| `--root <dir>` | discover surfaces under a directory instead |
+| `--json` | emit the report as JSON |
+| `--evidence` | include matched text on each finding; off by default |
+| `--list-categories` | print the categories this engine can emit, as JSON, and exit |
+| `--policy <level>` | `balanced` (default) or `strict`; there is no `off` level |
+
+### `analyze`
+
 | Flag | What it does |
 | --- | --- |
 | `--file <path>` | scan one file |
 | `--path <dir>` | scan a directory, recursively |
 | `--repo <url>` | clone a repository to a temporary directory, scan it, delete it |
 | `--ai` | semantic analysis, needs `AI_API_KEY` (or `ANTHROPIC_API_KEY`) |
+| `--semantic` | alias for `--ai` |
+| `--semantic-only` | deprecated alias for `--ai` |
 | `--filter-fp` | second pass that drops findings it judges unreal, needs `--ai` |
 | `--with-secrets` | add detect-secrets |
 | `--with-bandit` | add bandit |
 | `--with-linting` | add pylint |
 | `--with-dependencies` | add pip-audit |
 | `--with-all-checks` | add all four |
-| `--semgrep` (on `install-tools`) | install semgrep only |
 | `--json` | machine-readable report on stdout |
-| `--verbose` | print the code around each finding |
+| `-v`, `--verbose` | print the code around each finding |
 | `--no-cache` | rescan even if the content has not changed |
 
-`--semantic` is an alias for `--ai`. `--semantic-only` is a deprecated alias
-for the same thing.
+### `install-tools`
+
+| Flag | What it does |
+| --- | --- |
+| `--semgrep` | install semgrep only (powers the default no-API-key scan) |
+| `--secrets` | install detect-secrets only |
+| `--bandit` | install bandit only |
+| `--linting` | install pylint only |
+| `--dependencies` | install pip-audit only |
+
+`-V`, `--version` and `-h`, `--help` work at the top level and on every
+subcommand.
 
 Caching applies to `--ai` only, where it is keyed by file content so scanning
 the same code twice costs nothing. The cache is a JSON file in your home
 directory and `--no-cache` skips it. The static engines are not cached: they
 are local and fast, and a stale security result is worth less than the seconds
 it saves.
+
+## Exit codes
+
+Measured on 1.5.5, `surfaces`:
+
+| run | exit |
+| --- | --- |
+| clean | 0 |
+| info only | 0 |
+| medium only | 0 |
+| high or critical | 1 |
+| bad `--root` | 2 |
+
+A CI check on `$?` therefore **treats `info` and `medium` as clean**. If you
+want those to fail a build, read the JSON rather than the exit code.
+
+Exit 2 on a root that does not exist is deliberate (since 1.5.2): a scan that
+looked at nothing must never report clean. It is distinct from 1 so a pipeline
+can tell "found something" from "could not run".
+
+This contract is under review; if it changes it will be a documented breaking
+change.
 
 ## What it looks for
 
