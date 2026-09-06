@@ -208,12 +208,34 @@ export function scanMcpServer(entry: McpServerEntry): RawFinding[] {
     }
   }
 
-  // ── unpinned_remote_exec (info, always) ──────────────────────────────────
+  // ── unpinned_remote_exec (medium; exact pins stay silent) ────────────────
+  //
+  // Severity answers "what happens if the reader ignores this". Ignoring a
+  // floating MCP server means the agent fetches and executes whatever the
+  // registry serves next, in the agent's process, with the agent's privileges,
+  // on every session start. That is a live supply-chain execution path.
+  //
+  // It was `info`, and on a real repo (ECC @ e04ea0b9) that made the ONE true
+  // positive in twelve findings sort below eleven false ones -- and under
+  // strict, below three false criticals. A true finding a reader has to scroll
+  // past the false ones to reach is not doing its job.
+  //
+  // This REVERSES the severity rationale stated in 1.5.4, which kept it at
+  // `info` because "npx -y is how most MCP servers ship, and a check that turns
+  // a status chip red on a clean install gets ignored". That reasoning still
+  // holds for the ubiquity, and it is why this is medium rather than high:
+  // medium does not change the exit code (info/medium -> 0), so a CI gate on
+  // `$?` is unaffected and nobody's build turns red for shipping the way the
+  // ecosystem ships. What changes is the sort order inside the report.
+  //
+  // Only FLOATING specifiers are affected: `unpinnedRemoteExec` returns null
+  // for an exact version, so a correctly pinned server stays silent exactly as
+  // 1.5.4 made it. Nothing new fires on a project that did the right thing.
   const unpinned = unpinnedRemoteExec(command, args);
   if (unpinned) {
     out.push({
       category: 'unpinned_remote_exec',
-      severity: 'info',
+      severity: 'medium',
       surface: 'mcp',
       path,
       evidence: entry.name + ': ' + unpinned,

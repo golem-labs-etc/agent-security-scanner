@@ -8,7 +8,7 @@
     {
       "path": ".mcp.json",
       "category": "unpinned_remote_exec",
-      "severity": "info",
+      "severity": "medium",
       "id": "0d1219fa",
       "class": "true-positive"
     },

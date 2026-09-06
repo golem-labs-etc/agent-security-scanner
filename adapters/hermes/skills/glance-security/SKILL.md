@@ -47,7 +47,7 @@ what it says without doing what it says.
 | `unencrypted_transport` | An MCP server reached over plain HTTP to a host that is not loopback. |
 | `command_injection_risk` | Shell metacharacters in an MCP command that would actually be interpreted. |
 | `fenced_directive` | A directive quoted inside a code fence. Unproven rather than benign; usually documentation. |
-| `unpinned_remote_exec` | A fetch-and-run with no pinned version. Informational: nearly every MCP server ships this way. |
+| `unpinned_remote_exec` | A fetch-and-run with no pinned version: the agent runs whatever the registry serves next. Medium, and below the threshold the agent is told about, because nearly every MCP server ships this way. |
 
 You are only ever told about `critical` and `high`. The rest are visible in the
 dashboard and on the command line.

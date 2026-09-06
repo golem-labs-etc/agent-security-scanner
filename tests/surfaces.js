@@ -98,10 +98,14 @@ const POSITIVE = [
   // A third with no positive fixture, found only once negative fixtures
   // stopped counting toward coverage. It fired in N1 as a side effect of that
   // fixture using `npx -y`, which is not the same as anything asserting it
-  // works. info severity, so it never reaches an agent, but the gap was the
-  // same gap.
+  // works.
+  //
+  // MEDIUM since BL-3, not info: a floating specifier is a live fetch-and-run
+  // path, and at info the one true positive on a real repo sorted below eleven
+  // false ones. An EXACT pin still produces no finding at all, which is what
+  // P22 and the a-h set below assert.
   { id: 'P19', fixture: 'P19_unpinned_uvx.json', kind: 'inventory',
-    want: { category: 'unpinned_remote_exec', severity: 'info' } },
+    want: { category: 'unpinned_remote_exec', severity: 'medium' } },
 
   // P20 closes the gap the changelog has been carrying since the real-machine
   // scan: no positive fixture reached the fenced exfiltration path, and every
@@ -133,6 +137,15 @@ const POSITIVE = [
   // "improves" the check into a suppression, P21a fails because the finding is
   // gone entirely -- which is the whole point of asserting info rather than
   // asserting absence.
+  // BL-3 adversarial: the shape ECC actually ships, `npx -y pkg@latest`, is a
+  // live fetch-and-run path and must report MEDIUM. Both policies, because
+  // `scanMcpServer` never receives the policy at all -- asserting only one
+  // would leave that independence untested rather than proven.
+  { id: 'P24a', fixture: 'P24_unpinned_npx_latest.json', kind: 'inventory', policy: 'balanced',
+    want: { category: 'unpinned_remote_exec', severity: 'medium' } },
+  { id: 'P24b', fixture: 'P24_unpinned_npx_latest.json', kind: 'inventory', policy: 'strict',
+    want: { category: 'unpinned_remote_exec', severity: 'medium' } },
+
   { id: 'P23a', fixture: 'P23_prohibition_wrapped_payload.md', kind: 'prompt', policy: 'balanced',
     want: { category: 'prompt_injection', severity: 'info' } },
   { id: 'P23b', fixture: 'P23_prohibition_wrapped_payload.md', kind: 'prompt', policy: 'strict',

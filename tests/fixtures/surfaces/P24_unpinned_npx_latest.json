@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "mcp_servers": [
+    { "name": "chrome-devtools", "source": "/tmp/glance-fixture/P24/mcp.json",
+      "command": "npx", "args": ["-y", "chrome-devtools-mcp@latest"], "env": {} }
+  ],
+  "prompt_files": [],
+  "code_files": []
+}
