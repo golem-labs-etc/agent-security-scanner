@@ -13,44 +13,13 @@
       "class": "true-positive"
     },
     {
-      "path": "skills/github-ops/SKILL.md",
+      "path": "docs/zh-CN/skills/llm-trading-agent-security/SKILL.md",
       "line": 31,
-      "category": "prompt_injection",
-      "severity": "info",
-      "id": "179b4390",
-      "class": "negation-proximity"
-    },
-    {
-      "path": "skills/jira-integration/SKILL.md",
-      "line": 290,
-      "category": "prompt_injection",
-      "severity": "info",
-      "id": "204991ae",
-      "class": "negation-proximity"
-    },
-    {
-      "path": "skills/deep-research/SKILL.md",
-      "line": 36,
-      "category": "prompt_injection",
-      "severity": "info",
-      "id": "285152e7",
-      "class": "negation-proximity"
-    },
-    {
-      "path": "skills/lead-intelligence/SKILL.md",
-      "line": 40,
-      "category": "prompt_injection",
-      "severity": "info",
-      "id": "2f0b2e4e",
-      "class": "negation-proximity"
-    },
-    {
-      "path": "skills/llm-trading-agent-security/SKILL.md",
-      "line": 32,
       "category": "fenced_directive",
       "severity": "info",
-      "id": "36314666",
-      "class": "pattern-list"
+      "id": "0d59209b",
+      "class": "pattern-list",
+      "context": "pattern_list"
     },
     {
       "path": "skills/homelab-wireguard-vpn/SKILL.md",
@@ -61,14 +30,6 @@
       "class": "known-open:#52"
     },
     {
-      "path": "skills/tdd-workflow/SKILL.md",
-      "line": 24,
-      "category": "prompt_injection",
-      "severity": "info",
-      "id": "789988f2",
-      "class": "negation-proximity"
-    },
-    {
       "path": "skills/mailtrap-email-integration/SKILL.md",
       "line": 56,
       "category": "fenced_directive",
@@ -77,12 +38,31 @@
       "class": "known-open:#52"
     },
     {
+      "path": "skills/jira-integration/SKILL.md",
+      "line": 290,
+      "category": "prompt_injection",
+      "severity": "info",
+      "id": "991c41ba",
+      "class": "negation-proximity",
+      "context": "quoted_negation"
+    },
+    {
       "path": "skills/x-api/SKILL.md",
       "line": 223,
       "category": "prompt_injection",
       "severity": "info",
-      "id": "9a652584",
-      "class": "negation-proximity"
+      "id": "aeef7fd1",
+      "class": "negation-proximity",
+      "context": "quoted_negation"
+    },
+    {
+      "path": "skills/tdd-workflow/SKILL.md",
+      "line": 24,
+      "category": "prompt_injection",
+      "severity": "info",
+      "id": "bf001409",
+      "class": "negation-proximity",
+      "context": "quoted_negation"
     },
     {
       "path": "docs/ja-JP/skills/homelab-wireguard-vpn/SKILL.md",
@@ -93,12 +73,40 @@
       "class": "known-open:#52"
     },
     {
-      "path": "docs/zh-CN/skills/llm-trading-agent-security/SKILL.md",
+      "path": "skills/github-ops/SKILL.md",
       "line": 31,
+      "category": "prompt_injection",
+      "severity": "info",
+      "id": "e1b5d089",
+      "class": "negation-proximity",
+      "context": "quoted_negation"
+    },
+    {
+      "path": "skills/llm-trading-agent-security/SKILL.md",
+      "line": 32,
       "category": "fenced_directive",
       "severity": "info",
-      "id": "febda1e9",
-      "class": "pattern-list"
+      "id": "e6232f8f",
+      "class": "pattern-list",
+      "context": "pattern_list"
+    },
+    {
+      "path": "skills/lead-intelligence/SKILL.md",
+      "line": 40,
+      "category": "prompt_injection",
+      "severity": "info",
+      "id": "e8609ebe",
+      "class": "negation-proximity",
+      "context": "quoted_negation"
+    },
+    {
+      "path": "skills/deep-research/SKILL.md",
+      "line": 36,
+      "category": "prompt_injection",
+      "severity": "info",
+      "id": "ecb5a0b4",
+      "class": "negation-proximity",
+      "context": "quoted_negation"
     }
   ]
 }

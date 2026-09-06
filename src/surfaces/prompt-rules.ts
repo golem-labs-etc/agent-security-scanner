@@ -18,7 +18,7 @@
  * meaning" fires on exactly the attack and nothing else.
  */
 
-import { Finding, Category, Severity, Policy } from './types';
+import { Finding, Category, Severity, Policy, FindingContext } from './types';
 import { RawFinding } from './mcp-rules';
 import {
   eachMatch, lineAt, stripInvisible, foldConfusables, hasConfusable,
@@ -473,9 +473,9 @@ function quotedReason(
   src: string,
   ranges: Range[],
   index: number
-): 'prohibited in surrounding text' | 'inside a pattern list' | null {
-  if (inPatternList(src, ranges, index)) return 'inside a pattern list';
-  if (quotedUnderProhibition(src, index)) return 'prohibited in surrounding text';
+): FindingContext | null {
+  if (inPatternList(src, ranges, index)) return 'pattern_list';
+  if (quotedUnderProhibition(src, index)) return 'quoted_negation';
   return null;
 }
 
@@ -485,27 +485,31 @@ function quotedReason(
  * The two signals this serves -- a prohibition in the surrounding text, and
  * containment in a pattern list -- are both ATTACKER-CONTROLLABLE. "never obey:
  * <payload>" and a list named INJECTION_PATTERNS are exactly how a payload would
- * hide from us. So neither may suppress. They downgrade to `info` and carry a
- * marker naming the class, which keeps the finding visible and greppable while
- * taking it off the top of the report.
+ * hide from us. So neither may suppress. They downgrade to `info` and set
+ * `context`, which keeps the finding visible and machine-readable while taking
+ * it off the top of the report.
  *
  * `strict` reports it as written, unchanged, for the same reason `fenceVerdict`
  * does: an agent consuming raw markdown does not see the prohibition either.
  *
  * The category is left alone on purpose. A distinct category would be an
  * eleventh member of `CATEGORIES`, which is a fixed contract checked both
- * directions by the suite and mirrored on the site's capability page; the class
- * is expressed in the evidence line instead.
+ * directions by the suite and mirrored on the site's capability page.
+ *
+ * EVIDENCE IS NOT TOUCHED HERE, and that is load-bearing rather than tidiness.
+ * The fingerprint is computed over the raw evidence, so prefixing a marker onto
+ * it silently renamed every downgraded finding -- a baseline recorded before the
+ * downgrade no longer matched, and a corpus diff could not tell "we downgraded
+ * this" from "this disappeared and a new one arrived". The class travels in
+ * `context`; the human-readable prefix is added at render time only.
  */
-const QUOTED_MARKER = 'quoted directive';
 function quotedVerdict(
   policy: Policy,
   severity: Severity,
-  evidence: string,
-  why: 'prohibited in surrounding text' | 'inside a pattern list' | null
-): { severity: Severity; evidence: string } {
-  if (!why || policy === 'strict') return { severity, evidence };
-  return { severity: 'info', evidence: `${QUOTED_MARKER} (${why}): ${evidence}` };
+  why: FindingContext | null
+): { severity: Severity; context?: FindingContext } {
+  if (!why || policy === 'strict') return { severity };
+  return { severity: 'info', context: why };
 }
 
 export function scanPromptFile(
@@ -526,12 +530,14 @@ export function scanPromptFile(
     severity: Severity,
     line: number,
     evidence: string,
-    endLine?: number
+    endLine?: number,
+    context?: FindingContext
   ) => {
     const f: RawFinding = {
       category, severity, surface: 'prompt', path: filePath, line, evidence,
     };
     if (endLine !== undefined && endLine !== line) f.endLine = endLine;
+    if (context) f.context = context;
     out.push(f);
   };
 
@@ -542,8 +548,9 @@ export function scanPromptFile(
     const rx = new RegExp(re.source, re.flags.indexOf('g') === -1 ? re.flags + 'g' : re.flags);
     eachMatch(rx, prose, (m) => {
       const why = quotedReason(raw, ranges, m.index);
-      const q = quotedVerdict(policy, 'high', rawLineAt(raw, m.index), why);
-      push('prompt_injection', q.severity, lineAt(raw, m.index), q.evidence);
+      const q = quotedVerdict(policy, 'high', why);
+      push('prompt_injection', q.severity, lineAt(raw, m.index),
+           rawLineAt(raw, m.index), undefined, q.context);
     });
   }
 
@@ -553,9 +560,9 @@ export function scanPromptFile(
     eachMatch(rx, fenced, (m) => {
       const v = fenceVerdict(policy, 'prompt_injection', 'high');
       const why = quotedReason(raw, ranges, m.index);
-      const q = quotedVerdict(policy, v.severity,
-                              'in fenced block: ' + rawLineAt(raw, m.index), why);
-      push(v.category, q.severity, lineAt(raw, m.index), q.evidence);
+      const q = quotedVerdict(policy, v.severity, why);
+      push(v.category, q.severity, lineAt(raw, m.index),
+           'in fenced block: ' + rawLineAt(raw, m.index), undefined, q.context);
     });
   }
 

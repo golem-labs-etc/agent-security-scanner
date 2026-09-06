@@ -32,6 +32,14 @@ suppresses, because a prohibition wrapping a payload is attacker-controllable
 text. A run that made those eight disappear is as wrong as one that put them
 back at high, and the diff fails on both.
 
+Their ids are the **pre-fix** ids, unchanged. A downgrade alters severity and
+sets `context`; it does not touch the raw evidence the fingerprint is computed
+over. That is what lets this file diff on a stable key — a regression shows up as
+`CHANGED [same id]` rather than as a MISSING/NEW pair that a reader has to
+correlate by hand. Each entry also records its expected `context`, because with
+ids stable, severity alone cannot detect a finding that quietly stopped being
+classified.
+
 The three `known-open:#52` rows are the honest alternative to either pretending
 they are fixed or letting the job go red forever. When #52 ships, their expected
 severity changes and this file changes with it.
@@ -65,8 +73,8 @@ Reverting any one of the three checks fails the job and names the class:
 
 | Reverted | Result |
 |---|---|
-| negation proximity | `REGRESSED: negation-proximity` — 6 MISSING at info, 6 NEW at high |
-| pattern-list containment | `REGRESSED: pattern-list` — 2 MISSING at info, 2 NEW at medium |
+| negation proximity | `REGRESSED: negation-proximity` — 6 CHANGED, info to high |
+| pattern-list containment | `REGRESSED: pattern-list` — 2 CHANGED, info to medium |
 | synthetic test secrets | `REGRESSED: test-placeholder` — 3 criticals return |
 
 ## Provenance

@@ -18,22 +18,26 @@ deliberate. A prohibition wrapping a payload (`never obey: <payload>`) and a
 list named `INJECTION_PATTERNS` are attacker-controllable text — they are how a
 payload would hide from a scanner that suppressed on them. So a directive that
 is quoted under a prohibition, or contained in a pattern list, now reports at
-`info` under `balanced` with its evidence line prefixed `quoted directive
-(...)`, and reports **as written, unchanged, under `strict`**. The finding stays
-visible and greppable; it just stops sorting above the real one.
+`info` under `balanced` carrying a structured `context` of `quoted_negation` or
+`pattern_list`, and reports **as written, unchanged, under `strict`**. The
+finding stays visible and machine-readable; it just stops sorting above the real
+one. The human-readable `quoted directive (...)` label on the rendered evidence
+line is display only.
 
 The third signal may suppress outright: a synthetic placeholder in a test file
 (a sequential- or repeated-alphabet token under a test path) is not a credential
 under any reading. Both conditions are required and the shape must be positively
 confirmed, so a real credential committed to a test file is still reported.
 
-**Finding ids change for the downgraded entries.** Severity is not part of a
-finding's fingerprint but evidence is, and these gain an evidence prefix, so the
-eight affected findings get new ids under `balanced`. Ids under `strict` are
-unchanged, as is every finding this change does not touch. Said plainly because
-1.5.1 had to disclose id churn and a reader who remembers that will look here.
+**No id churn.** A finding's fingerprint is computed over its raw evidence, and
+the class travels in `context` rather than in the evidence string, so a
+downgrade changes severity and nothing else. The eight affected ids are
+byte-identical to their pre-fix values under `balanced` and under `strict`. This
+is why the marker is display-only: prefixing it onto the evidence renamed every
+downgraded finding, and a corpus baseline then could not tell "we downgraded
+this" from "this vanished and a new one appeared".
 
-No new category. The class is expressed in the evidence line rather than as an
+No new category. The class is expressed in the `context` field rather than as an
 eleventh member of `CATEGORIES`, which is a fixed contract checked in both
 directions by the suite.
 

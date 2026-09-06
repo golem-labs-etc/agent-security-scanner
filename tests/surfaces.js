@@ -518,6 +518,46 @@ function declaredPaths(c) {
     }
   }
 
+  // ── CTX: downgrading a quoted directive must not change its id (#51) ───────
+  //
+  // The marker naming the class started life as an evidence prefix. Evidence is
+  // fingerprinted, so that silently renamed every downgraded finding: a corpus
+  // baseline could not tell "we downgraded this" from "this vanished and a new
+  // one appeared". The class moved to `context`, which is not fingerprinted,
+  // and the human-readable prefix is added at render time only.
+  //
+  // P23 is prose, so its category is identical under both policies and only the
+  // severity moves. That makes it the exact case where the id MUST hold.
+  console.log('');
+  console.log('CTX       a downgrade changes severity, never the id');
+  {
+    const scan = async (policy) => scanSurfaces(
+      promptInv(['P23_prohibition_wrapped_payload.md']),
+      Object.assign({}, OPTS, { policy, evidence: true })
+    );
+    const bal = (await scan('balanced')).findings.find((f) => f.category === 'prompt_injection');
+    const str = (await scan('strict')).findings.find((f) => f.category === 'prompt_injection');
+    const checks = [
+      ['CTX1 the finding fires under both policies', !!bal && !!str],
+      ['CTX2 balanced is info, strict is high', bal && str && bal.severity === 'info' && str.severity === 'high'],
+      ['CTX3 the id is byte-identical across the downgrade', bal && str && bal.id === str.id],
+      ['CTX4 balanced carries context=quoted_negation', bal && bal.context === 'quoted_negation'],
+      ['CTX5 strict carries no context', str && str.context === undefined],
+      ['CTX6 the marker never reaches evidence (it is fingerprinted)',
+        bal && str && !/quoted directive/.test(bal.evidence || '') && !/quoted directive/.test(str.evidence || '')],
+      ['CTX7 evidence is identical across the downgrade', bal && str && bal.evidence === str.evidence],
+    ];
+    for (const [label, okCheck] of checks) {
+      if (okCheck) { pass++; console.log('  ok    ' + label); }
+      else {
+        fail++; failures.push(label.split(' ')[0]);
+        console.log('  FAIL  ' + label +
+          `  (bal ${bal && bal.severity}/${bal && bal.id}/${bal && bal.context}, ` +
+          `str ${str && str.severity}/${str && str.id}/${str && str.context})`);
+      }
+    }
+  }
+
   // ── PIN: a dist-tag or a range is not a version pin (issue #16) ────────────
   //
   // The evidence string, not the count, is the assertion. A count-only check

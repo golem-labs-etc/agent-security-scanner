@@ -93,6 +93,7 @@ const got = (report.findings || []).map((f) => ({
   category: f.category,
   severity: f.severity,
   id: f.id,
+  context: f.context,
 }));
 
 // CONTROL: a clean diff produced by scanning nothing is the failure mode this
@@ -113,6 +114,10 @@ for (const e of SPEC.expected) {
     problems.push({ cls: e.class, msg: `MISSING  [${e.id}] ${e.severity} ${e.category} ${e.path}:${e.line || ''}` });
   } else if (g.severity !== e.severity || g.category !== e.category) {
     problems.push({ cls: e.class, msg: `CHANGED  [${e.id}] expected ${e.severity} ${e.category}, got ${g.severity} ${g.category}  ${e.path}:${e.line || ''}` });
+  } else if ((g.context || null) !== (e.context || null)) {
+    // The id survives a downgrade by design, so severity alone cannot detect a
+    // finding that stopped being classified. `context` is the check for that.
+    problems.push({ cls: e.class, msg: `CONTEXT  [${e.id}] expected context ${e.context || 'none'}, got ${g.context || 'none'}  ${e.path}:${e.line || ''}` });
   }
 }
 for (const g of got) {

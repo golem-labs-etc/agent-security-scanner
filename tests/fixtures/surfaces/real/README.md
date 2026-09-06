@@ -47,6 +47,8 @@ They assert **nothing above info, under `balanced` only**. Both halves matter:
   the category, because a prohibition wrapping a payload is attacker-controllable
   text and must stay visible. A category-absence check would pass only if the
   finding had been suppressed, which is the one outcome this class may not have.
+  The finding also keeps its id: the class travels in `context`, not in the
+  fingerprinted evidence.
 - Not under `strict`. Under `strict` these files still report HIGH, by design.
 
 The three remaining ECC false positives (a DuckDNS `curl` and a Mailtrap
