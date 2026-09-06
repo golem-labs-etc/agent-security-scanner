@@ -5,7 +5,7 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
-## Unreleased
+## 1.5.6 — 2026-09-06
 
 **`unpinned_remote_exec` is now `medium`, not `info` (BL-3).** Severity answers
 what happens if the reader ignores a finding. Ignoring a floating MCP server
@@ -34,7 +34,7 @@ status chip red on a clean install gets ignored". That reasoning is why this is
 `medium` and not `high`: medium does not change the exit code, so nobody's build
 turns red for shipping the way the ecosystem ships.
 
-**Owed at the next release:** the `/examples` capability page carries a live
+**Owed with this release:** the `/examples` capability page carries a live
 `unpinned_remote_exec` card (`[555a7a14]`) captured at `info`. Its severity
 changes, so the card needs re-capture at release step 9. The finding id does not
 change.
@@ -87,6 +87,29 @@ Not fixed here, and filed: `exfiltration_instruction` fires on ordinary outbound
 API calls in documentation code fences — a DuckDNS `curl` and a Mailtrap
 endpoint, critical under `strict` (#52). Its three findings are recorded in the
 corpus baseline as known-open rather than papered over.
+
+**README corrections (#54, plus a follow-up in this release).** Docs only, and
+every value below was measured against the published 1.5.5 binary from an empty
+directory rather than read off the source.
+
+The "Every flag" table carried no `surfaces` flags at all, so the README
+contradicted itself: the prose told the reader to pass `--evidence` while the
+exhaustive table had no such flag. There is now one table per subcommand, taken
+from `--help`: `surfaces` (6), `analyze` (15), `install-tools` (5), plus `-V`
+and `-h`.
+
+Exit codes were documented nowhere. The measured contract is now written down:
+clean 0, `info` 0, `medium` 0, `high` or `critical` 1, unreadable `--root` 2. It
+states plainly that a CI check on `$?` reads `info` and `medium` as clean, that
+exit 2 has been deliberate since 1.5.2 because a scan that looked at nothing
+must never report clean, and that the contract is under review, so any change to
+it would be a documented breaking one.
+
+`surfaces` first appeared around line 176 of 314 while the opening positions the
+product around agent surfaces; it is now in "Try it in one line". The
+`unpinned_remote_exec` paragraph, which said the unpinned `npx -y` fetch-and-run
+is reported at `info`, now says `medium`, matching the re-grade above.
+
 
 ## 1.5.5 — 2026-09-05
 
