@@ -5,6 +5,45 @@ Notable changes to `glance-scanner`. Newest first.
 This file starts at 1.3.0. Earlier releases predate it; their history is in the
 git log.
 
+## Unreleased
+
+**Three false-positive classes closed, measured on the ClawHub skill registry.**
+Scanned 2,692 skill files from a public mirror of `openclaw/skills`. Before:
+5 critical, 26 high. After: 3 critical, 3 high. Both true criticals kept.
+
+**`developer mode` and `debug mode` no longer fire on their own.** Discord,
+Slack, Chrome and Android each ship a setting with that name, and `--debug` is
+a CLI flag. Five high `prompt_injection` findings on the corpus, all false, all
+this. The two words now need safety vocabulary in the same sentence (`bypass`,
+`guardrails`, `restrictions`, `system prompt`, and so on) on either side.
+`god`, `unrestricted`, `uncensored`, `jailbreak` and `dan` mode are unchanged.
+Agent nouns were tried as the corroborator and rejected: `you` and `your` are
+how every README is written. Fixtures N21 (negative) and P25 (positive).
+
+**Attack-pattern tables and bullets in security skills sit at `info`, with a
+new `pattern_enumeration` context.** `pattern_list` only saw list literals
+inside code fences. Documentation writes its catalogues as markdown tables,
+bullets and bold labels, with the framing in a heading or table header. That
+gap produced 16 of the 26 highs, every one a defensive skill listing the
+strings it defends against. Requires both structure (row, bullet, or
+`**Label:**`) and detection framing on the line, in the table header, or in the
+enclosing heading; stops at the heading. Downgrades, never suppresses, for the
+same reason `quoted_negation` does: the framing is attacker-controllable.
+Fixture N22.
+
+**An html comment that never names an agent is at most `info`, with a new
+`weak_address` context.** `your` plus `add` in a Content Security Policy
+tutorial's comment was a critical `hidden_instruction`. The addressed branch is
+now tiered: a comment that names an agent, or summons one in the vocative
+(`Assistant: you must ...`, P4), stays critical; bare `you`/`your`/`system`
+plus an imperative drops to `info`. Bare `agent` and `assistant` are accepted
+only in the vocative, which is what keeps the codegen provenance banners of N15
+and N17 quiet. Fixture N23.
+
+**No finding id moves.** Evidence strings are untouched; the class travels in
+`context` and the human-readable prefix is added at render time, as 1.5.5
+established.
+
 ## 1.5.6 — 2026-09-06
 
 **`unpinned_remote_exec` is now `medium`, not `info` (BL-3).** Severity answers

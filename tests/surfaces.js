@@ -150,6 +150,11 @@ const POSITIVE = [
     want: { category: 'prompt_injection', severity: 'info' } },
   { id: 'P23b', fixture: 'P23_prohibition_wrapped_payload.md', kind: 'prompt', policy: 'strict',
     want: { category: 'prompt_injection', severity: 'high' } },
+
+  // The other half of N21. `developer mode` alone is a product setting; with
+  // safety vocabulary in the same sentence it is the jailbreak it always was.
+  { id: 'P25', fixture: 'P25_developer_mode_with_override.md', kind: 'prompt',
+    want: { category: 'prompt_injection', severity: 'high' } },
 ];
 
 /**
@@ -333,6 +338,32 @@ const NEGATIVE = [
   { id: 'N17', fixture: 'N17_codegen_banner_hyphenated.md', kind: 'prompt',
     rule: 'codegen banner naming a hyphenated agent-*.md source is not hidden_instruction',
     check: (r) => !r.findings.some((x) => x.category === 'hidden_instruction') },
+
+  // ClawHub corpus, 8 Sep 2026: 2,692 skill files, 26 high `prompt_injection`,
+  // roughly 21 of them false. Three shapes accounted for nearly all of it.
+  //
+  // `developer mode` and `debug mode` are settings Discord, Slack, Chrome and
+  // Android actually ship, and `--debug` is a CLI flag. Five highs, all false.
+  // The pattern now needs safety vocabulary in the same sentence (P25).
+  { id: 'N21', fixture: 'N21_developer_mode_product_setting.md', kind: 'prompt',
+    rule: 'developer/debug mode as a product setting is not prompt_injection',
+    check: (r) => !r.findings.some((x) => x.category === 'prompt_injection') },
+  // A security skill tabulating the strings it detects. `inPatternList` only
+  // saw fenced list literals; documentation writes tables, bullets and bold
+  // labels. Sixteen highs, all defensive skills. Downgraded to info with
+  // `pattern_enumeration`, never suppressed, because the framing is
+  // attacker-controllable.
+  { id: 'N22', fixture: 'N22_attack_pattern_table.md', kind: 'prompt',
+    rule: 'attack-pattern table/bullets/labels in a security skill sit at info with pattern_enumeration',
+    check: (r) => r.findings.filter((x) => x.category === 'prompt_injection')
+      .every((x) => x.severity === 'info' && x.context === 'pattern_enumeration') },
+  // A CSP tutorial's html comment: `your` plus `add` was enough for a critical.
+  // Bare AGENT_REF now yields info with `weak_address`; a named or vocative
+  // address (P4) is still critical.
+  { id: 'N23', fixture: 'N23_html_comment_csp_tutorial.md', kind: 'prompt',
+    rule: 'html comment that never names an agent is at most info (weak_address)',
+    check: (r) => r.findings.filter((x) => x.category === 'hidden_instruction')
+      .every((x) => x.severity === 'info' && x.context === 'weak_address') },
 ];
 
 /**
