@@ -1,3 +1,32 @@
+<!-- IDENTITY-GUARD:START -->
+# Which repository this is
+
+| | |
+|---|---|
+| Remote | `golem-labs-etc/agent-security-scanner` |
+| Local path | `~/agent-security-scanner` |
+| Issue references | always `golem-labs-etc/agent-security-scanner#NN`, never a bare `#NN` |
+
+## Before acting on any issue or backlog number
+
+A number that arrives from a chat message, a work order or a handoff is a claim,
+not an address. The same number exists in every other repo. Resolve it here
+before you touch code:
+
+1. Confirm your working directory is `~/agent-security-scanner`. If it is not, stop and say which
+   tree you are actually in.
+2. Run `gh issue view NN --repo golem-labs-etc/agent-security-scanner` and read the title.
+3. Compare that title to how the task was described to you. If they do not
+   describe the same defect, stop and ask. Matching numbers are not a match.
+
+Skipping step 2 is how a session's work lands in the wrong repository.
+
+## When you report back
+
+Name the repo and the branch in the first line of every report, in the
+`golem-labs-etc/agent-security-scanner` form. A report that says only "#52 is done" is not reviewable.
+<!-- IDENTITY-GUARD:END -->
+
 # Working in this repository
 
 **This repo is PUBLIC and MIT licensed.** Everything committed here is world
