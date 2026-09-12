@@ -411,8 +411,8 @@ function concealedInSpan(s: string): boolean {
  * How a directive found inside a code fence is reported.
  *
  * `balanced` downgrades it to `fenced_directive` at medium. Not info: info is
- * where `unpinned_remote_exec` lives, and that is genuinely benign. A directive
- * in a fence is not benign, it is unproven, and the severity should say so.
+ * for a finding that is genuinely benign on a clean machine. A directive in a
+ * fence is not benign, it is unproven, and the severity should say so.
  *
  * `strict` reports it as what it is. Part B passes strict, because an agent
  * consuming raw markdown never sees the fence.

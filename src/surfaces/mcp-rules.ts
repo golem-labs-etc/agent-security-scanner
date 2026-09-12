@@ -2,10 +2,12 @@
  * Rules for MCP server entries.
  *
  * Severity discipline matters more here than coverage does. `unpinned_remote_exec`
- * is `info` and stays `info`: `npx -y` is how very nearly every MCP server in
- * the ecosystem ships, so raising it turns the status chip red on a clean
- * machine. A tool that is red on install is a tool people learn to ignore, and
- * an ignored tool catches nothing.
+ * is `medium`, and only for a floating specifier. It was `info` until BL-3.
+ * `npx -y` is how very nearly every MCP server in the ecosystem ships, and that
+ * ubiquity is why this is medium rather than high: medium leaves the exit code
+ * at 0, so no CI gate turns red for shipping the way the ecosystem ships, and
+ * what changes is the sort order inside the report. The reversal and its
+ * evidence are recorded at the emit site below.
  */
 
 import { McpServerEntry, Finding, Category, Severity, FindingContext } from './types';
