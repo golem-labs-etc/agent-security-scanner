@@ -22,22 +22,6 @@
       "context": "pattern_list"
     },
     {
-      "path": "skills/homelab-wireguard-vpn/SKILL.md",
-      "line": 233,
-      "category": "fenced_directive",
-      "severity": "medium",
-      "id": "4c517722",
-      "class": "known-open:#52"
-    },
-    {
-      "path": "skills/mailtrap-email-integration/SKILL.md",
-      "line": 56,
-      "category": "fenced_directive",
-      "severity": "medium",
-      "id": "7eab22aa",
-      "class": "known-open:#52"
-    },
-    {
       "path": "skills/jira-integration/SKILL.md",
       "line": 290,
       "category": "prompt_injection",
@@ -63,14 +47,6 @@
       "id": "bf001409",
       "class": "negation-proximity",
       "context": "quoted_negation"
-    },
-    {
-      "path": "docs/ja-JP/skills/homelab-wireguard-vpn/SKILL.md",
-      "line": 232,
-      "category": "fenced_directive",
-      "severity": "medium",
-      "id": "bf28f1ae",
-      "class": "known-open:#52"
     },
     {
       "path": "skills/github-ops/SKILL.md",

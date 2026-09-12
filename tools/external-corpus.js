@@ -10,8 +10,13 @@
  *
  * The expected set is NOT "zero findings". It is:
  *   - the one true positive (`unpinned_remote_exec` on `.mcp.json`), and
- *   - eight quoted-directive entries that must be present AT INFO, and
- *   - three `exfiltration_instruction` mediums that are known-open against #52.
+ *   - eight quoted-directive entries that must be present AT INFO.
+ *
+ * It used to carry a third group: three `exfiltration_instruction` mediums
+ * recorded as known-open against #52, so the job stayed green while they were
+ * unfixed. #52 is fixed and they are gone from the set, which means the job now
+ * FAILS if they come back -- as three `NEW` entries. That is the point of
+ * removing them rather than re-recording them as expected-absent.
  *
  * That an entry is expected at `info` rather than expected absent is the whole
  * point: the quoted-directive class downgrades rather than suppresses, because

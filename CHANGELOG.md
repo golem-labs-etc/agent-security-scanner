@@ -7,6 +7,50 @@ git log.
 
 ## Unreleased
 
+**`exfiltration_instruction` no longer fires on an ordinary outbound API call
+in a documentation code fence** (#52). On the pinned `affaan-m/ECC` corpus this
+was 3 findings — `critical` under `strict`, the highest severity the scanner
+emits, on a DuckDNS dynamic-DNS updater and a Mailtrap sandbox endpoint. The
+corpus is now 9 expected findings, down from 12, and the three are removed from
+the expected set rather than re-recorded, so the job fails if they return.
+
+Two independent causes, fixed separately:
+
+- **`process.env` is not the `.env` file.** The property access and the dotfile
+  spell the same four characters, so `process.env.MAILTRAP_INBOX_ID` — an inbox
+  number — matched the credentials-file branch of `SECRET_ARTEFACT` and became
+  a critical exfiltration source. `process.env` and `import.meta.env` are now
+  excluded from that branch, anchored on a word boundary so `/etc/ddns.env` is
+  untouched. The half of the shape that IS a credential is not lost with it:
+  `process.env.<NAME>` and `process.env["<NAME>"]` are read by a new
+  `ENV_CREDENTIAL`, judged by the name like every other credential variable and
+  run through the same authenticating-to-the-destination exclusions. Fixtures
+  N24 (negative) and P26 (positive).
+- **A credential named after its destination is authenticating to it.**
+  `--data-urlencode "token=${DUCKDNS_TOKEN}"` against `www.duckdns.org` is
+  DuckDNS's own token presented to DuckDNS, the same judgement `AUTH_PRECEDES`
+  already makes for an `Authorization` header — but made from the name, because
+  a credential passed as a query or form parameter sits in no recognisable auth
+  position. Matched against the destination's **registrable domain**, never any
+  label in the host: `duckdns.org.evil.invalid` contains the label `duckdns`
+  and is not DuckDNS. Checked per destination, so a paragraph holding both the
+  service's endpoint and an attacker's cannot let the first exempt the second.
+  Fixtures N25 (negative), P27 (positive) and P28 (the lookalike subdomain).
+
+The cost is stated in the source rather than left to be discovered: a service's
+own token sent to that same service for an attacker's benefit is named the same
+way and is missed. That was already true of every credential in an
+`Authorization` header, by the same deliberate trade.
+
+Severity is deliberately unchanged. `critical` for "a URL near a token" is
+worth revisiting, as #52 notes, but these two fixes remove the false positives
+without it and a severity change is a separate decision.
+
+Two more verbatim ECC files join the suite as ECC9 and ECC10, asserting **no
+findings at all under both policies** — `strict` is the half that bites, since
+under `balanced` the fence downgrade renames both to `fenced_directive`/medium
+and a balanced-only assertion would go green on the unfixed rule.
+
 **Three false-positive classes closed, measured on the ClawHub skill registry.**
 Scanned 2,692 skill files from a public mirror of `openclaw/skills`. Before:
 5 critical, 26 high. After: 3 critical, 3 high. Both true criticals kept.
