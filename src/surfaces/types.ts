@@ -154,8 +154,17 @@ export interface Finding {
  *
  * `quoted_negation` — the match's line or parent bullet forbids what it quotes.
  * `pattern_list`    — the match sits inside a list literal of detection patterns.
+ * `pattern_enumeration` — the match is a row or bullet in a prose catalogue of
+ *                     attack patterns, framed as detection by its heading or
+ *                     table header.
+ * `weak_address`    — a concealed HTML comment carrying imperatives that never
+ *                     names an agent. Reported, but not led with.
  */
-export type FindingContext = 'quoted_negation' | 'pattern_list';
+export type FindingContext =
+  | 'quoted_negation'
+  | 'pattern_list'
+  | 'pattern_enumeration'
+  | 'weak_address';
 
 /** Something the caller needs to know that is not a finding about the target. */
 export interface Warning {

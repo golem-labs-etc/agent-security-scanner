@@ -209,6 +209,8 @@ function printCheckedLocations(
 const QUOTED_CONTEXT_LABEL: Record<string, string> = {
   quoted_negation: 'quoted directive (prohibited in surrounding text)',
   pattern_list: 'quoted directive (inside a pattern list)',
+  pattern_enumeration: 'quoted directive (inside a documented attack-pattern table or list)',
+  weak_address: 'concealed comment, no agent named',
 };
 
 function printSurfaceReport(report: any, withEvidence: boolean, header = true): void {
