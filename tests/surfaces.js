@@ -155,6 +155,48 @@ const POSITIVE = [
   // safety vocabulary in the same sentence it is the jailbreak it always was.
   { id: 'P25', fixture: 'P25_developer_mode_with_override.md', kind: 'prompt',
     want: { category: 'prompt_injection', severity: 'high' } },
+
+  // ── the load-bearing half of #52 ──────────────────────────────────────────
+  //
+  // #52 is a SUPPRESSION change: two shapes stop being exfiltration. A
+  // suppression that went one step too far would look identical in the suite,
+  // because a false negative and a fix produce the same green. So each of the
+  // two mechanisms gets a positive fixture that is the attack the mechanism
+  // could have hidden, and P28 is the adversarial case for the second one.
+  //
+  // All three were measured against the PRE-FIX rule as well, and all three
+  // fired there. A control that never fired either way proves nothing.
+  //
+  // Both policies each, for the reason P20 gives: the difference IS the
+  // assertion. A single policy passes while the downgrade is broken.
+
+  // Mechanism 1: `process.env` stopped being the `.env` FILE. If that had been
+  // done by dropping the shape rather than by re-reading it under
+  // ENV_CREDENTIAL, this goes silent -- a provider key posted to a collector.
+  { id: 'P26a', fixture: 'P26_env_credential_exfil.md', kind: 'prompt', policy: 'balanced',
+    want: { category: 'fenced_directive', severity: 'medium' } },
+  { id: 'P26b', fixture: 'P26_env_credential_exfil.md', kind: 'prompt', policy: 'strict',
+    want: { category: 'exfiltration_instruction', severity: 'critical' } },
+
+  // Mechanism 2: a credential named after its destination is authenticating to
+  // it. The same `${DUCKDNS_TOKEN}` in the same parameter position, sent to a
+  // host that is not DuckDNS, must still fire. If it does not, the exemption is
+  // an off-switch rather than a test.
+  { id: 'P27a', fixture: 'P27_param_credential_exfil.md', kind: 'prompt', policy: 'balanced',
+    want: { category: 'fenced_directive', severity: 'medium' } },
+  { id: 'P27b', fixture: 'P27_param_credential_exfil.md', kind: 'prompt', policy: 'strict',
+    want: { category: 'exfiltration_instruction', severity: 'critical' } },
+
+  // The adversarial case for mechanism 2, and the reason it reads the
+  // registrable domain rather than any label in the host.
+  // `www.duckdns.org.update-service.invalid` CONTAINS the label `duckdns` and
+  // belongs to whoever registered `update-service.invalid`. A containment test
+  // over every label would hand a lookalike subdomain the real service's
+  // exemption, which is a bypass anyone can buy for the price of a domain.
+  { id: 'P28a', fixture: 'P28_lookalike_subdomain_exfil.md', kind: 'prompt', policy: 'balanced',
+    want: { category: 'fenced_directive', severity: 'medium' } },
+  { id: 'P28b', fixture: 'P28_lookalike_subdomain_exfil.md', kind: 'prompt', policy: 'strict',
+    want: { category: 'exfiltration_instruction', severity: 'critical' } },
 ];
 
 /**
@@ -364,6 +406,44 @@ const NEGATIVE = [
     rule: 'html comment that never names an agent is at most info (weak_address)',
     check: (r) => r.findings.filter((x) => x.category === 'hidden_instruction')
       .every((x) => x.severity === 'info' && x.context === 'weak_address') },
+
+  // ── #52, the two shapes distilled ─────────────────────────────────────────
+  //
+  // ECC9 and ECC10 below are the real files. These two are the same shapes
+  // hand-written and short, so the rule is pinned by something a reader can
+  // hold in their head, and so a failure names the mechanism rather than
+  // pointing at line 233 of a 306-line VPN guide.
+  //
+  // Both assert NO FINDINGS AT ALL under balanced, for the reason N14 gives at
+  // length: the fence downgrade RENAMES the category, so `no
+  // exfiltration_instruction` is the obvious check and it is blind -- a broken
+  // rule surfaces here as `fenced_directive`/medium and the check never sees
+  // it. Measured both ways. Each is 0 findings with the fix and 1 medium (1
+  // critical under strict) without it.
+
+  // `process.env.NODE_ENV` is an environment READ, not the `.env` FILE. This
+  // fired critical purely because the property access and the dotfile spell
+  // the same four characters, which is also what made an inbox id a credential
+  // on ECC. The destination here is deliberately unrelated to the caller, so
+  // nothing but the source test can be keeping it quiet.
+  { id: 'N24', fixture: 'N24_env_accessor_not_dotfile.md', kind: 'prompt',
+    rule: 'process.env.NODE_ENV is an environment read, not a credentials file: nothing at all',
+    check: (r) => r.findings.length === 0 },
+  { id: 'N24s', fixture: 'N24_env_accessor_not_dotfile.md', kind: 'prompt', policy: 'strict',
+    rule: 'and no exfiltration_instruction under strict, at any severity',
+    check: (r) => r.counts.critical === 0 && r.counts.high === 0
+      && !r.findings.some((x) => x.category === 'exfiltration_instruction') },
+
+  // A service's own token presented to that service. P27 is this fixture with
+  // the destination changed and nothing else, and P27 still fires: the pair is
+  // the whole claim, and either one alone is worthless.
+  { id: 'N25', fixture: 'N25_service_own_token.md', kind: 'prompt',
+    rule: "a service's own token sent to that service is authentication: nothing at all",
+    check: (r) => r.findings.length === 0 },
+  { id: 'N25s', fixture: 'N25_service_own_token.md', kind: 'prompt', policy: 'strict',
+    rule: 'and no exfiltration_instruction under strict, at any severity',
+    check: (r) => r.counts.critical === 0 && r.counts.high === 0
+      && !r.findings.some((x) => x.category === 'exfiltration_instruction') },
 ];
 
 /**
@@ -420,10 +500,10 @@ for (const [id, fixture, why] of REAL) {
  * had been suppressed -- the outcome this class is specifically not allowed to
  * have. Severity is the assertion because visibility is the requirement.
  *
- * The three remaining ECC false positives (a DuckDNS `curl` and a Mailtrap
- * endpoint, which fire `exfiltration_instruction`) are NOT here. They are a
- * different rule and are tracked in #52; adding them would assert a fix that
- * this change does not make.
+ * The three remaining ECC false positives -- a DuckDNS `curl` and a Mailtrap
+ * endpoint, firing `exfiltration_instruction` -- were absent from this list
+ * while #52 was open. They are now ECC9 and ECC10 below, in their own group,
+ * because they assert something stronger and under both policies.
  *
  * See `fixtures/surfaces/real/README.md` for provenance and licence.
  */
@@ -447,6 +527,43 @@ for (const [id, fixture, why] of ECC) {
     rule: 'security content, balanced: nothing above info (' + why + ')',
     check: (r) => r.counts.critical === 0 && r.counts.high === 0 && r.counts.medium === 0,
   });
+}
+
+/**
+ * The other two real ECC files, verbatim: the `exfiltration_instruction` class
+ * of #52.
+ *
+ * Held apart from `ECC` above because the assertion is stronger and runs under
+ * BOTH policies. The #51 class downgrades and must stay visible at info; this
+ * class must not fire at all. Nothing here quotes an attack or addresses an
+ * agent, so there is nothing for a reviewer to adjudicate and nothing to keep
+ * on the report.
+ *
+ * `strict` is the half that bites. Under `balanced` the fence downgrade turns
+ * both into mediums, so a balanced-only pair would go green on a rule that
+ * still called a documented API call CRITICAL -- which is the exact finding
+ * #52 reports. Measured on 1.5.5: one MEDIUM each under balanced, one CRITICAL
+ * each under strict, at `skills/homelab-wireguard-vpn/SKILL.md:233` and
+ * `skills/mailtrap-email-integration/SKILL.md:56`.
+ */
+const ECC_EXFIL = [
+  ['ECC9', 'real/ECC9_homelab_wireguard_vpn.SKILL.md',
+    "a DuckDNS updater presenting DuckDNS's own token"],
+  ['ECC10', 'real/ECC10_mailtrap_email.SKILL.md',
+    'a Mailtrap endpoint built from process.env'],
+];
+
+for (const [id, fixture, why] of ECC_EXFIL) {
+  for (const policy of ['balanced', 'strict']) {
+    NEGATIVE.push({
+      id: id + (policy === 'strict' ? 's' : 'b'),
+      fixture,
+      kind: 'prompt',
+      policy,
+      rule: 'documented outbound call, ' + policy + ': nothing at all (' + why + ')',
+      check: (r) => r.findings.length === 0,
+    });
+  }
 }
 
 async function scanCase(c) {

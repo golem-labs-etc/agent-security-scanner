@@ -150,13 +150,54 @@ const EXFIL_VERB =
  * because of it. The paths named here are stores that hold credentials, and
  * they are matched anywhere, so `~/.hermes/.env` and `$HOME/.ssh/id_rsa` are
  * both still caught.
+ *
+ * `process.env` and `import.meta.env` are excluded from the `.env` branch,
+ * because the property access and the dotfile spell the same four characters
+ * and they are not the same thing. `process.env` is the environment object a
+ * running program reads; `.env` is the file on disk that seeds it. Reading a
+ * property off the former is what every Node integration doc does on its first
+ * line. That collision made
+ * `https://sandbox.api.mailtrap.io/api/send/${process.env.MAILTRAP_INBOX_ID}`
+ * a CRITICAL exfiltration finding on a documentation code fence (#52) -- an
+ * inbox number, matched as a credentials file -- and would have done the same
+ * for `process.env.NODE_ENV`.
+ *
+ * The exclusion is anchored on a word boundary, so a real file named
+ * `myprocess.env` or `/etc/ddns.env` is untouched. The case that IS a
+ * credential does not go missing with it: see ENV_CREDENTIAL below.
  */
 const SECRET_ARTEFACT =
-  /(?:\.env\b|\.ssh\b|\.aws\b|\.gnupg\b|\.kube\b|\.docker\/config|\.npmrc\b|\.netrc\b|\.pgpass\b|\.pypirc\b|\.git-credentials\b|id_rsa|id_ed25519|id_ecdsa|\/etc\/(?:passwd|shadow))/gi;
+  /(?:(?<!\bprocess|\bmeta)\.env\b|\.ssh\b|\.aws\b|\.gnupg\b|\.kube\b|\.docker\/config|\.npmrc\b|\.netrc\b|\.pgpass\b|\.pypirc\b|\.git-credentials\b|id_rsa|id_ed25519|id_ecdsa|\/etc\/(?:passwd|shadow))/gi;
+
+/** The name suffixes that say a variable holds a credential. */
+const CREDENTIAL_NAME = '[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*';
 
 /** An environment variable whose NAME says it holds a credential. */
-const CREDENTIAL_VAR =
-  /\$\{?[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\}?/g;
+const CREDENTIAL_VAR = new RegExp(`\\$\\{?${CREDENTIAL_NAME}\\}?`, 'g');
+
+/**
+ * The same thing read in code rather than in shell: `process.env.API_KEY`.
+ *
+ * This shape used to reach the rule through SECRET_ARTEFACT, as a match on the
+ * `.env` in `process.env` -- which fired on the whole environment object and so
+ * on `process.env.MAILTRAP_INBOX_ID` and `process.env.NODE_ENV` alike. That
+ * branch is now anchored to the file (see SECRET_ARTEFACT), and this restores
+ * the half of it that was a real signal, judged the way every other credential
+ * variable is judged: by the NAME, and through the same
+ * authenticating-to-the-destination exclusions below.
+ *
+ * Both the dot and the bracket access, because
+ * `process.env["ANTHROPIC_API_KEY"]` is the same read.
+ *
+ * The accessor is matched in a lookbehind so the span is the NAME alone. That
+ * is not cosmetic: the span is what `namedForDest` below reads, and a span
+ * carrying the literal text `process.env.` would let a destination host with
+ * the label `process` in it claim the credential as its own.
+ */
+const ENV_CREDENTIAL = new RegExp(
+  `(?<=\\b(?:process|import\\.meta)\\.env\\s*(?:\\.\\s*|\\[\\s*["'\`]))${CREDENTIAL_NAME}`,
+  'g'
+);
 
 /**
  * A credential variable used to authenticate TO the destination.
@@ -201,6 +242,66 @@ const AUTH_PRECEDES = [
  * preceded by a quote rather than by whitespace, and both still fire.
  */
 const ASSIGN_PRECEDES = /(?:^|\s)[A-Z][A-Z0-9_]*=["']?$/;
+
+/**
+ * Labels that appear in every host and so name no particular service.
+ *
+ * `api` would otherwise let `api.github.com` exempt `$API_KEY` sent anywhere at
+ * all, which is the opposite of the test below.
+ */
+const GENERIC_LABEL = new Set([
+  'com', 'net', 'org', 'edu', 'gov', 'info', 'biz', 'dev', 'app', 'site',
+  'link', 'xyz', 'cloud', 'online', 'tech', 'name', 'pro', 'live', 'invalid',
+  'www', 'api', 'apis', 'apps', 'cdn', 'auth', 'login', 'oauth', 'static',
+  'sandbox', 'staging', 'test', 'demo', 'beta', 'prod', 'production',
+  'dashboard', 'console', 'portal', 'service', 'services', 'server', 'host',
+]);
+
+/**
+ * The labels of a destination that say WHICH service it is.
+ *
+ * The last two labels only, never every label in the host. `duckdns.org.evil.xyz`
+ * contains the label `duckdns` and is not DuckDNS, so reading the registrable
+ * domain rather than any label anywhere is what stops a lookalike subdomain
+ * from inheriting the real service's exemption below. A two-label host that is
+ * generic on both halves yields nothing, and nothing means no exemption, which
+ * is the safe direction.
+ */
+const destLabels = (dest: string): string[] => {
+  const host = /^[^\/\s:?#"'`<>)\]]+/.exec(dest.replace(/^[a-z][a-z0-9+.-]*:\/\//i, ''));
+  if (!host) return [];
+  const parts = host[0].toLowerCase().replace(/^\[|\]$/g, '').split('.').filter(Boolean);
+  if (parts.length < 2) return [];
+  return parts.slice(-2).filter((p) => p.length >= 4 && !GENERIC_LABEL.has(p));
+};
+
+/**
+ * A credential named after the service it is being sent to.
+ *
+ * `--data-urlencode "token=${DUCKDNS_TOKEN}"` against `https://www.duckdns.org/update`
+ * is DuckDNS's own token being presented to DuckDNS. So is `$STRIPE_SECRET_KEY`
+ * to `api.stripe.com` and `$GITHUB_TOKEN` to `api.github.com`. The variable is
+ * the key to the door being knocked on, exactly as in AUTH_PRECEDES above, and
+ * this is the same judgement made from the NAME instead of from the position --
+ * which is what was needed, because a credential passed as a query or form
+ * parameter sits in no recognisable auth position at all. On the pinned ECC
+ * corpus this one shape was a CRITICAL finding on a DuckDNS dynamic-DNS
+ * updater in a documentation fence (#52).
+ *
+ * Checked per destination rather than per window: a paragraph holding both the
+ * service's own endpoint and an attacker's must not let the first exempt a
+ * credential sent to the second.
+ *
+ * The cost, stated here rather than discovered later: a service's own token
+ * sent to that same service for an attacker's benefit -- a webhook the attacker
+ * registered, a repository they control -- is named the same way and is missed.
+ * That is already true of every credential in an Authorization header, for the
+ * same reason and by the same deliberate trade.
+ */
+const namedForDest = (varName: string, dest: string): boolean => {
+  const name = varName.toLowerCase();
+  return destLabels(dest).some((l) => name.indexOf(l) !== -1);
+};
 
 /**
  * How far apart the three signals may be and still be one instruction.
@@ -850,8 +951,12 @@ export function scanPromptFile(
     const dests = spansOf(NETWORK_DEST, sent);
     if (!dests.length) return null;
 
-    const sources: Range[] = spansOf(SECRET_ARTEFACT, sent);
-    for (const c of spansOf(CREDENTIAL_VAR, sent)) {
+    // An artefact is a source against every destination. A credential VARIABLE
+    // is judged against each destination separately, because whether it is
+    // being stolen or being presented depends on where it is going.
+    const sources: { at: Range; name: string | null }[] =
+      spansOf(SECRET_ARTEFACT, sent).map((at) => ({ at, name: null }));
+    for (const c of spansOf(CREDENTIAL_VAR, sent).concat(spansOf(ENV_CREDENTIAL, sent))) {
       let auth = false;
       for (const d of dests) if (c[0] >= d[0] && c[1] <= d[1]) auth = true;
       if (auth) continue;
@@ -860,7 +965,7 @@ export function scanPromptFile(
       for (const re of AUTH_PRECEDES) if (re.test(before)) auth2 = true;
       if (auth2) continue;
       if (ASSIGN_PRECEDES.test(before)) continue;
-      sources.push(c);
+      sources.push({ at: c, name: sent.slice(c[0], c[1]) });
     }
     if (!sources.length) return null;
 
@@ -868,8 +973,9 @@ export function scanPromptFile(
     for (const v of verbs) {
       for (const src of sources) {
         for (const d of dests) {
-          const lo = Math.min(v[0], src[0], d[0]);
-          const hi = Math.max(v[1], src[1], d[1]);
+          if (src.name !== null && namedForDest(src.name, sent.slice(d[0], d[1]))) continue;
+          const lo = Math.min(v[0], src.at[0], d[0]);
+          const hi = Math.max(v[1], src.at[1], d[1]);
           if (hi - lo > EXFIL_WINDOW) continue;
           if (!best || hi - lo < best[1] - best[0]) best = [lo, hi];
         }

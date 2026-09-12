@@ -52,8 +52,8 @@ They assert **nothing above info, under `balanced` only**. Both halves matter:
 - Not under `strict`. Under `strict` these files still report HIGH, by design.
 
 The three remaining ECC false positives (a DuckDNS `curl` and a Mailtrap
-endpoint, firing `exfiltration_instruction`) are deliberately absent: different
-rule, tracked in #52, not fixed here.
+endpoint, firing `exfiltration_instruction`) were deliberately absent while #52
+was open. They are `ECC9`–`ECC10` below.
 
 ## Provenance and licence
 
@@ -75,3 +75,36 @@ License, Copyright (c) 2026 Affaan Mustafa, taken verbatim at commit
 `ECC5` earns its place twice over: its prohibition sits past the 200-character
 evidence cap, so a check reading the evidence string rather than the full line
 misses it.
+
+# Two more real files from ECC, verbatim — the documented-outbound-call class
+
+`ECC9`–`ECC10` are the `exfiltration_instruction` false positives of issue #52:
+an ordinary outbound API call, quoted in a documentation code fence, reported as
+the highest severity the scanner emits. On 1.5.5 the two produced one MEDIUM
+`fenced_directive` each under `balanced` and one CRITICAL
+`exfiltration_instruction` each under `strict`.
+
+They assert **no findings at all, under both policies**, and both halves of that
+differ from the `ECC1`–`ECC8` group above on purpose:
+
+- Nothing at all, not "nothing above info". The #51 class downgrades because a
+  prohibition wrapping a payload is attacker-controllable and a reviewer has to
+  see it. Nothing here quotes an attack or addresses an agent. There is nothing
+  to adjudicate, so a finding kept at info would be noise rather than evidence.
+- Both policies, not `balanced` only. `strict` is the half that bites: under
+  `balanced` the fence downgrade renames both to `fenced_directive`/medium, so a
+  balanced-only assertion would pass while the rule still called a documented
+  API call CRITICAL — which is exactly what #52 reports.
+
+| Fixture | Path in ECC | Line | What fired |
+|---|---|---|---|
+| `ECC9` | `skills/homelab-wireguard-vpn/SKILL.md` | 233 | a DuckDNS updater presenting DuckDNS's own `${DUCKDNS_TOKEN}` |
+| `ECC10` | `skills/mailtrap-email-integration/SKILL.md` | 56 | a Mailtrap endpoint built from `process.env.MAILTRAP_INBOX_ID` |
+
+Both are from `affaan-m/ECC` (<https://github.com/affaan-m/ECC>), MIT License,
+Copyright (c) 2026 Affaan Mustafa, taken verbatim at the same commit
+`e04ea0b9cc8248686edf5ac751cadff550e162b8` as `ECC1`–`ECC8`.
+
+`ECC10` earns its place beyond the count: what fired there was `.env`, matched
+inside `process.env`. The property access and the dotfile spell the same four
+characters, and the value it made a credential was an inbox number.
